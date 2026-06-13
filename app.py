@@ -177,7 +177,15 @@ def send_code_email(to_email, code):
         msg["From"] = sender
         msg["To"] = to_email
 
-        server = smtplib.SMTP_SSL(os.getenv("SMTP_SERVER", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", 465)))
+        host = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", 465))
+        
+        if port == 587:
+            server = smtplib.SMTP(host, port, timeout=10)
+            server.starttls()
+        else:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+            
         server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS"))
         server.send_message(msg)
         server.quit()
