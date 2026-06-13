@@ -18,12 +18,17 @@ function toast(msg, err) {
 
 /* ---------- загрузка ---------- */
 async function loadAll() {
-  const [m, d] = await Promise.all([
-    fetch('/api/meta').then(r => r.json()),
-    fetch('/api/deals').then(r => r.json()),
-  ]);
-  META = m; DATA = d;
-  $('lastImport').textContent = m.last_import ? 'выгрузка: ' + m.last_import : '';
+  try {
+    const [m, d] = await Promise.all([
+      fetch('/api/meta').then(r => { if(r.status===401) throw new Error('401'); return r.json()}),
+      fetch('/api/deals').then(r => { if(r.status===401) throw new Error('401'); return r.json()}),
+    ]);
+    META = m; DATA = d;
+    $('lastImport').textContent = m.last_import ? 'выгрузка: ' + m.last_import : '';
+    
+    if (m.user && m.user.needs_password_change) {
+      $('pwDlg').showModal();
+    }
 
   SPEC = {};
   (m.specialists || []).forEach(s => {
@@ -35,6 +40,10 @@ async function loadAll() {
   fillSelect($('fStage'), m.stages.concat(['(пусто)']));
   applyManagerZone(false);
   render();
+  } catch(e) {
+    if(e.message === '401') location.href = '/login';
+    else toast('Ошибка загрузки данных', true);
+  }
 }
 
 function fillSelect(sel, vals, chosen) {
@@ -264,7 +273,10 @@ async function patch(key, fields) {
       headers: {'Content-Type': 'application/json', 'X-User': encodeURIComponent(user)},
       body: JSON.stringify(fields),
     });
-    if (!r.ok) throw new Error((await r.json()).error || r.status);
+    if (!r.ok) {
+      if(r.status === 401) return location.href = '/login';
+      throw new Error((await r.json()).error || r.status);
+    }
     const fresh = await r.json();
     const i = DATA.findIndex(d => d.key === key);
     if (i >= 0) DATA[i] = fresh;
@@ -443,12 +455,32 @@ $('btnImport').onclick = async () => {
   b.disabled = true; b.textContent = '⏳ Импорт...';
   try {
     const r = await fetch('/api/import', {method: 'POST'});
+    if(r.status === 401) return location.href = '/login';
     const s = await r.json();
     if (s.error) throw new Error(s.error);
     toast(`Импорт: новых ${s.new}, обновлено ${s.updated}`);
     await loadAll(); refresh();
   } catch (e) { toast('Импорт не удался: ' + e.message, true); }
   b.disabled = false; b.textContent = '⟳ Обновить из 1С';
+};
+
+$('btnLogout').onclick = async () => {
+  await fetch('/api/auth/logout', {method: 'POST'});
+  location.href = '/login';
+};
+
+$('btnChangePw').onclick = async () => {
+  const np = $('newPw').value;
+  if(np.length < 4) return toast('Пароль слишком короткий', true);
+  try {
+    const r = await fetch('/api/auth/change-password', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({new_password: np})
+    });
+    if(!r.ok) throw new Error((await r.json()).error);
+    toast('Пароль изменен!');
+    $('pwDlg').close();
+  } catch(e) { toast(e.message, true); }
 };
 
 loadAll();

@@ -19,6 +19,7 @@
   <label class="hl">Менеджер: <select id="user"><option value="">— не выбран —</option></select></label>
   <label class="hl">Город: <select id="myCity"><option value="">все</option></select></label>
   <button id="btnImport" title="Перечитать xlsx-файл выгрузки">⟳ Обновить из 1С</button>
+  <button id="btnLogout" style="background:#d32f2f;color:white;border:none;margin-left:10px">Выйти</button>
   <span class="sub" id="lastImport"></span>
 </header>
 
@@ -106,6 +107,13 @@
   <h3>История изменений <span id="histKey"></span></h3>
   <div id="histBody"></div>
   <button onclick="histDlg.close()">Закрыть</button>
+</dialog>
+
+<dialog id="pwDlg">
+  <h3 style="margin-top:0">Придумайте новый пароль</h3>
+  <p style="font-size:14px;color:#555">Это ваш первый вход. Пожалуйста, смените пароль с "1" на более надежный.</p>
+  <input type="password" id="newPw" placeholder="Новый пароль" style="width:100%;padding:10px;box-sizing:border-box;margin-bottom:10px">
+  <button id="btnChangePw" style="width:100%;padding:10px;background:#1a73e8;color:#fff;border:none">Сохранить</button>
 </dialog>
 
 <div id="toast"></div>

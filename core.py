@@ -144,6 +144,21 @@ CREATE TABLE IF NOT EXISTS specialists (
     name TEXT,
     city TEXT
 );
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    needs_password_change INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS verification_codes (
+    email TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS allowed_emails (
+    email TEXT PRIMARY KEY
+);
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 """
