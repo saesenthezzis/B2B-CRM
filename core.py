@@ -139,6 +139,11 @@ CREATE TABLE IF NOT EXISTS history (
     user TEXT, ts TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS specialists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    city TEXT
+);
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 """
@@ -362,40 +367,10 @@ def derive(d, today=None):
 # ---------------- зоны ответственности ----------------
 
 def load_specialists():
-    """Специалисты B2B и их города из «ЗоныОтветсвенности.xlsx» (лист «Лист1»).
-
-    Файл ищется рядом с выгрузкой и в папке rmko; терпим к вариантам
-    написания имени. Возвращает [{"name": ..., "city": ...}, ...].
-    """
-    import glob
-
-    import pandas as pd
-    path = None
-    for d in (os.path.dirname(BASE), BASE):
-        for pat in ("ЗоныОтвет*ности.xlsx", "Зоны*ответ*ности.xlsx"):
-            hits = glob.glob(os.path.join(d, pat))
-            if hits:
-                path = hits[0]
-                break
-        if path:
-            break
-    if not path:
-        return []
-    try:
-        df = pd.read_excel(path, sheet_name="Лист1")
-    except Exception:
-        return []
-    df.columns = [str(c).strip() for c in df.columns]
-    spec_col = next((c for c in df.columns if "специалист" in c.lower()), None)
-    city_col = next((c for c in df.columns if "город" in c.lower()), None)
-    if not spec_col or not city_col:
-        return []
-    out = []
-    for _, r in df.iterrows():
-        name, city = clean_text(r.get(spec_col)), clean_text(r.get(city_col))
-        if name:
-            out.append({"name": name, "city": city})
-    return out
+    con = db()
+    rows = [dict(r) for r in con.execute("SELECT id, name, city FROM specialists ORDER BY name")]
+    con.close()
+    return rows
 
 
 # ---------------- импорт из xlsx ----------------

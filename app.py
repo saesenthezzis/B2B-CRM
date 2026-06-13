@@ -116,6 +116,30 @@ def do_import():
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/api/specialists")
+def add_specialist():
+    data = request.json
+    name = (data.get("name") or "").strip()
+    city = (data.get("city") or "").strip()
+    if not name or not city:
+        return jsonify({"error": "Имя и город обязательны"}), 400
+    
+    con = core.db()
+    con.execute("INSERT INTO specialists (name, city) VALUES (?, ?)", (name, city))
+    con.commit()
+    con.close()
+    return jsonify({"success": True})
+
+
+@app.delete("/api/specialists/<int:sid>")
+def delete_specialist(sid):
+    con = core.db()
+    con.execute("DELETE FROM specialists WHERE id = ?", (sid,))
+    con.commit()
+    con.close()
+    return jsonify({"success": True})
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     if not os.path.exists(core.DB_PATH):

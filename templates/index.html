@@ -13,6 +13,7 @@
   <nav id="modes">
     <button class="mode act" data-m="mgr">Менеджер</button>
     <button class="mode" data-m="boss">Руководитель</button>
+    <button class="mode" data-m="settings">Настройки</button>
   </nav>
   <div class="spacer"></div>
   <label class="hl">Менеджер: <select id="user"><option value="">— не выбран —</option></select></label>
@@ -79,6 +80,24 @@
     <div class="card">
       <h3>Менеджеры</h3>
       <div class="tw" style="max-height:420px"><table id="tblMgr"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- ======== Настройки ======== -->
+  <section id="v-settings" class="hidden">
+    <div class="card" style="max-width: 600px; margin: 0 auto;">
+      <h3>Зоны ответственности (B2B специалисты)</h3>
+      <div style="margin-bottom: 15px;">
+        <input id="newSpecName" placeholder="Имя менеджера" style="width:200px">
+        <input id="newSpecCity" placeholder="Город" style="width:200px">
+        <button id="btnAddSpec">Добавить</button>
+      </div>
+      <div class="tw">
+        <table id="tblSpec">
+          <thead><tr><th>Менеджер</th><th>Город</th><th style="width:60px"></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
   </section>
 </div>
