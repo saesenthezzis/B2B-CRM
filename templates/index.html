@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>РМКО — рабочее место корпоративного отдела</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>🏢 РМКО</h1>
+  <nav id="modes">
+    <button class="mode act" data-m="mgr">Менеджер</button>
+    <button class="mode" data-m="boss">Руководитель</button>
+  </nav>
+  <div class="spacer"></div>
+  <label class="hl">Менеджер: <select id="user"><option value="">— не выбран —</option></select></label>
+  <label class="hl">Город: <select id="myCity"><option value="">все</option></select></label>
+  <button id="btnImport" title="Перечитать xlsx-файл выгрузки">⟳ Обновить из 1С</button>
+  <span class="sub" id="lastImport"></span>
+</header>
+
+<div class="wrap">
+  <!-- ======== Менеджер ======== -->
+  <section id="v-mgr">
+    <div class="tabs" id="queues"></div>
+    <div class="filters">
+      <input id="q" placeholder="🔍 контрагент, №, комментарий, телефон...">
+      <select id="fPeriod">
+        <option value="">Период: все</option>
+        <option value="today">Сегодня</option>
+        <option value="day">День</option>
+        <option value="week">Неделя</option>
+        <option value="month">Месяц</option>
+        <option value="year">Год</option>
+        <option value="manual">Вручную</option>
+      </select>
+      <span id="manualDates" class="hidden">
+        <label class="dlbl">С <input type="date" id="fFrom"></label>
+        <label class="dlbl">По <input type="date" id="fTo"></label>
+      </span>
+      <select id="fStage"><option value="">Этап: все</option></select>
+      <label class="chk"><input type="checkbox" id="fMine"> только мои</label>
+    </div>
+    <div class="tw">
+      <table id="tbl"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="pager">
+      <button id="prev">←</button><span id="pinfo"></span><button id="next">→</button>
+      <span id="totals"></span>
+    </div>
+    <details class="legend"><summary>Легенда статусов и правила закрытия</summary>
+      <div class="leg-grid">
+        <div><span class="badge lv-new">Новая</span> заполнить этап сделки</div>
+        <div><span class="badge lv-warn">Контроль</span> резерв ≥ 2 раб. дней</div>
+        <div><span class="badge lv-risk">Риск</span> счёт отправлен, не оплачивает ≥ 3 раб. дней — связаться</div>
+        <div><span class="badge lv-paid">Ждём товар</span> оплачено, товара нет в наличии</div>
+        <div><span class="badge lv-ready">Выдать!</span> оплачено и товар в наличии</div>
+        <div><span class="badge lv-done">Выдан</span> успешно завершена</div>
+        <div><span class="badge lv-closed">Без продажи</span> удалён / не состоялась</div>
+        <div><span class="badge lv-error">Ошибка</span> неправильно закрыта — причина в подсказке</div>
+      </div>
+      <p>Правила: <b>Закрыто</b> = ✔товар в наличии + дата закрытия · <b>Удалён</b> (инициатива компании) = причина удаления + дата · <b>Не состоялась</b> (инициатива клиента) = причина отказа + дата. Выданные в 1С накладные закрываются автоматически. Сроки — в рабочих днях, выходные не считаются.</p>
+    </details>
+  </section>
+
+  <!-- ======== Руководитель ======== -->
+  <section id="v-boss" class="hidden">
+    <div class="kpis" id="bossKpis"></div>
+    <div class="grid2">
+      <div class="card"><h3>Воронка по этапам (сумма)</h3><canvas id="chFunnel"></canvas></div>
+      <div class="card"><h3>Потери по причинам (без продажи, сумма)</h3><canvas id="chLost"></canvas></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>Динамика по неделям (сумма по дате РН)</h3><canvas id="chWeeks"></canvas></div>
+      <div class="card"><h3>Города (актив / выдано, сумма)</h3><canvas id="chCities"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Менеджеры</h3>
+      <div class="tw" style="max-height:420px"><table id="tblMgr"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+</div>
+
+<dialog id="histDlg">
+  <h3>История изменений <span id="histKey"></span></h3>
+  <div id="histBody"></div>
+  <button onclick="histDlg.close()">Закрыть</button>
+</dialog>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
