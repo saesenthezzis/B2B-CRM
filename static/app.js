@@ -102,10 +102,10 @@ function applyManagerZone(save = true) {
 
 /* ---------- очереди ---------- */
 const QUEUES = [
-  { id: 'new', name: '🆕 Новые', f: d => d.flag === 'NEW' || d.level === 'new' },
-  { id: 'action', name: '⚡ Требуют действия', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
-  { id: 'done', name: '🟢 Закрытые', f: d => d.is_closed && d.level === 'done' },
-  { id: 'lost', name: '⚫ Без продажи', f: d => d.is_closed && d.level !== 'done' },
+  { id: 'new', name: 'Новые', f: d => d.flag === 'NEW' || d.level === 'new' },
+  { id: 'action', name: 'Требуют действия', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
+  { id: 'done', name: 'Закрытые', f: d => d.is_closed && d.level === 'done' },
+  { id: 'lost', name: 'Без продажи', f: d => d.is_closed && d.level !== 'done' },
   { id: 'all', name: 'Все', f: () => true },
 ];
 
@@ -131,7 +131,7 @@ function periodRange() {
 }
 
 function baseFiltered() {
-  const city = $('myCity').value, stage = $('fStage').value;
+  const city = $('myCity').value, stage = $('fStage').value, status = $('fStatus').value;
   const q = $('q').value.toLowerCase(), mine = $('fMine').checked;
   const me = ($('user').value || '').toLowerCase();
   const zoneCities = SPEC[$('user').value] || [];
@@ -140,6 +140,7 @@ function baseFiltered() {
     if (city === ZONE) { if (!zoneCities.includes(d.city)) return false; }
     else if (city && d.city !== city) return false;
     if (stage && (stage === '(пусто)' ? d.stage : d.stage !== stage)) return false;
+    if (status && d.cur_status !== status) return false;
     if (mine && me && !(d.author || '').toLowerCase().includes(me)) return false;
     if (range) {
       const dd = (d.doc_date || d.created_at || '').slice(0, 10);
@@ -196,7 +197,7 @@ function selectHtml(d, field, options, allowEmpty = true) {
 }
 
 function rowHtml(d) {
-  const lvl = `lv-${d.level}`;
+  const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
   const wa = (d.phones || []).map(p => `<a class="wa" target="_blank" href="https://wa.me/${p}" title="WhatsApp">💬 ${p.slice(-4)}</a>`).join('');
   const dateStr = d.doc_date ? d.doc_date.slice(0, 10).split('-').reverse().join('.') : '';
@@ -208,19 +209,19 @@ function rowHtml(d) {
       : '<span class="cl">—</span>';
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
-    <td><span class="badge ${lvl}">${esc(d.cur_status)}</span>${flag}</td>
-    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}${d.overdue_contact ? ' · ⚠ просрочен контакт' : ''}</span></td>
-    <td title="${esc(d.doc)}">${esc(d.doc_num)}</td>
+    <td><span class="badge ${stClass}">${esc(d.cur_status)}</span>${flag}</td>
+    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}${d.overdue_contact ? ' · ⚠️' : ''}</span></td>
+    <td class="td-copy" title="${esc(d.doc)}"><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td>${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
     <td>${esc(d.city || '')}</td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td class="sum">${money(d.amount)}</td>
     <td>${selectHtml(d, 'stage', META.stages)}</td>
-    <td style="text-align:center"><input type="checkbox" data-k="${esc(d.key)}" data-f="in_stock" ${d.in_stock ? 'checked' : ''} title="Товар в наличии"></td>
+    <td style="text-align:center"><label class="aether-check"><input type="checkbox" data-k="${esc(d.key)}" data-f="in_stock" ${d.in_stock ? 'checked' : ''}><span class="aether-check__box"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></label></td>
     <td>${selectHtml(d, 'next_step', META.next_steps)}</td>
     <td><input type="date" data-k="${esc(d.key)}" data-f="plan_contact" value="${planVal}" class="${d.overdue_contact ? 'late' : ''}"></td>
     <td>${reason}</td>
-    <td>${selectHtml(d, 'check_status', META.check_statuses, false)}</td>
+    <td class="td-narrow">${selectHtml(d, 'check_status', META.check_statuses, false)}</td>
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="..."></td>
     <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
@@ -268,6 +269,22 @@ function bindRowEvents() {
     };
   });
   tb.querySelectorAll('button[data-hist]').forEach(b => b.onclick = () => showHist(b.dataset.hist));
+  // Copy doc_num on click
+  tb.querySelectorAll('.td-copy').forEach(td => {
+    td.style.cursor = 'pointer';
+    td.onclick = (e) => {
+      if (e.target.closest('a')) return;
+      const text = td.querySelector('.copy-text')?.dataset.copy;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        const tip = document.createElement('span');
+        tip.className = 'copy-tip';
+        tip.textContent = 'Скопировано!';
+        td.appendChild(tip);
+        setTimeout(() => tip.remove(), 1200);
+      });
+    };
+  });
 }
 
 async function patch(key, fields) {
@@ -419,9 +436,9 @@ function renderBoss() {
 
 /* ---------- режимы и события ---------- */
 let mode = 'mgr';
-document.querySelectorAll('.mode').forEach(b => b.onclick = () => {
+document.querySelectorAll('.mode-tab').forEach(b => b.onclick = () => {
   mode = b.dataset.m;
-  document.querySelectorAll('.mode').forEach(x => x.classList.toggle('act', x === b));
+  document.querySelectorAll('.mode-tab').forEach(x => x.classList.toggle('act', x === b));
   $('v-mgr').classList.toggle('hidden', mode !== 'mgr');
   $('v-boss').classList.toggle('hidden', mode !== 'boss');
   $('v-settings').classList.toggle('hidden', mode !== 'settings');
@@ -473,10 +490,14 @@ $('btnAddSpec').onclick = async () => {
 };
 
 $('fStage').onchange = () => { page = 0; refresh(); };
+$('fStatus').onchange = () => { page = 0; refresh(); };
 $('fMine').onchange = () => { page = 0; refresh(); };
 $('q').oninput = () => { page = 0; render(); };
 $('fPeriod').onchange = () => {
-  $('manualDates').classList.toggle('hidden', $('fPeriod').value !== 'manual');
+  const manual = $('fPeriod').value === 'manual';
+  const el = $('manualDates');
+  if (manual) { el.classList.remove('hidden'); el.style.display = 'flex'; }
+  else { el.classList.add('hidden'); el.style.display = 'none'; }
   page = 0; refresh();
 };
 $('fFrom').onchange = $('fTo').onchange = () => { page = 0; refresh(); };

@@ -349,23 +349,23 @@ def derive(d, today=None):
     if errors:
         hint, level = " · ".join(errors), "error"
     elif st == "Удалён" or stage in ("Удалён", "Не состоялась"):
-        hint, level = "Сделка закрыта без продажи", "closed"
+        hint, level = "Закрыта без продажи", "closed"
     elif stage == "Заменена":
-        hint, level = "Заменена другой сделкой", "closed"
+        hint, level = "Заменена другой РН", "closed"
     elif st == "Выдан" or (stage == "Закрыто" and in_stock):
-        hint, level = "Успешно завершена, товар выдан", "done"
+        hint, level = "Товар выдан", "done"
     elif stage == "Оплата есть" and in_stock:
-        hint, level = "Оплачена, товар в наличии — выдать клиенту", "ready"
+        hint, level = "Оплачена, выдать товар", "ready"
     elif stage == "Оплата есть":
-        hint, level = "Оплачена — ожидаем поступление товара", "paid"
+        hint, level = "Ожидаем товар", "paid"
     elif stage == "Счет отправлен" and wd >= 3:
-        hint, level = f"Не оплачивает {wd} раб. дн. — связаться", "risk"
+        hint, level = "Связаться по оплате", "risk"
     elif (stage == "Счет отправлен" or st == "Резерв") and wd >= 2:
-        hint, level = f"В резерве {wd} раб. дн. — требует контроля", "warn"
+        hint, level = "Требует контроля", "warn"
     elif stage == "Сервис":
-        hint, level = "Сервисная РН (доставка)", "info"
+        hint, level = "Сервисная РН", "info"
     elif not stage and st == "Резерв":
-        hint, level = "Новая — заполнить этап сделки", "new"
+        hint, level = 'Не указан "Этап сделки"', "new"
     else:
         hint, level = "В работе", "info"
 
