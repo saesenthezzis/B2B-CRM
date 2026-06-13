@@ -6,8 +6,8 @@ let queue = 'new', page = 0, sortCol = 'amount', sortDir = -1;
 const PAGE = 50;
 const $ = id => document.getElementById(id);
 const money = n => n == null ? '' : Math.round(n).toLocaleString('ru-RU');
-const mln = n => (n / 1e6).toLocaleString('ru-RU', {maximumFractionDigits: 1}) + ' млн';
-const esc = s => (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const mln = n => (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн';
+const esc = s => (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 function toast(msg, err) {
@@ -18,30 +18,32 @@ function toast(msg, err) {
 
 /* ---------- загрузка ---------- */
 async function loadAll() {
+  // Покажем пустые счетчики (все по 0) во время загрузки данных
+  renderQueues([]);
   try {
     const [m, d] = await Promise.all([
-      fetch('/api/meta').then(r => { if(r.status===401) throw new Error('401'); return r.json()}),
-      fetch('/api/deals').then(r => { if(r.status===401) throw new Error('401'); return r.json()}),
+      fetch('/api/meta').then(r => { if (r.status === 401) throw new Error('401'); return r.json() }),
+      fetch('/api/deals').then(r => { if (r.status === 401) throw new Error('401'); return r.json() }),
     ]);
     META = m; DATA = d;
     $('lastImport').textContent = m.last_import ? 'выгрузка: ' + m.last_import : '';
-    
+
     if (m.user && m.user.needs_password_change) {
       $('pwDlg').showModal();
     }
 
-  SPEC = {};
-  (m.specialists || []).forEach(s => {
-    if (!SPEC[s.name]) SPEC[s.name] = [];
-    if (s.city && !SPEC[s.name].includes(s.city)) SPEC[s.name].push(s.city);
-  });
-  fillUserSelect();
-  fillCitySelect();
-  fillSelect($('fStage'), m.stages.concat(['(пусто)']));
-  applyManagerZone(false);
-  render();
-  } catch(e) {
-    if(e.message === '401') location.href = '/login';
+    SPEC = {};
+    (m.specialists || []).forEach(s => {
+      if (!SPEC[s.name]) SPEC[s.name] = [];
+      if (s.city && !SPEC[s.name].includes(s.city)) SPEC[s.name].push(s.city);
+    });
+    fillUserSelect();
+    fillCitySelect();
+    fillSelect($('fStage'), m.stages.concat(['(пусто)']));
+    applyManagerZone(false);
+    render();
+  } catch (e) {
+    if (e.message === '401') location.href = '/login';
     else toast('Ошибка загрузки данных', true);
   }
 }
@@ -100,11 +102,11 @@ function applyManagerZone(save = true) {
 
 /* ---------- очереди ---------- */
 const QUEUES = [
-  {id: 'new',    name: '🆕 Новые',                     f: d => d.flag === 'NEW' || d.level === 'new'},
-  {id: 'action', name: '⚡ Требуют действия / Ошибки', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact},
-  {id: 'done',   name: '🟢 Закрытые',                  f: d => d.is_closed && d.level === 'done'},
-  {id: 'lost',   name: '⚫ Без продажи',               f: d => d.is_closed && d.level !== 'done'},
-  {id: 'all',    name: 'Все',                          f: () => true},
+  { id: 'new', name: '🆕 Новые', f: d => d.flag === 'NEW' || d.level === 'new' },
+  { id: 'action', name: '⚡ Требуют действия', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
+  { id: 'done', name: '🟢 Закрытые', f: d => d.is_closed && d.level === 'done' },
+  { id: 'lost', name: '⚫ Без продажи', f: d => d.is_closed && d.level !== 'done' },
+  { id: 'all', name: 'Все', f: () => true },
 ];
 
 /* ---------- фильтр периода ---------- */
@@ -116,10 +118,10 @@ function periodRange() {
   const back = days => { const d = new Date(); d.setDate(d.getDate() - days); return fmtDate(d); };
   switch (p) {
     case 'today': return [t, t];
-    case 'day':   return [back(1), t];
-    case 'week':  return [back(7), t];
+    case 'day': return [back(1), t];
+    case 'week': return [back(7), t];
     case 'month': return [back(30), t];
-    case 'year':  return [back(365), t];
+    case 'year': return [back(365), t];
     case 'manual': {
       const from = $('fFrom').value || null, to = $('fTo').value || null;
       return (from || to) ? [from, to] : null;
@@ -146,38 +148,42 @@ function baseFiltered() {
       if (range[1] && dd > range[1]) return false;
     }
     if (q && !((d.client || '') + ' ' + (d.doc_num || '') + ' ' + (d.comment_1c || '') + ' ' +
-               (d.notes || '') + ' ' + (d.contacts || '')).toLowerCase().includes(q)) return false;
+      (d.notes || '') + ' ' + (d.contacts || '')).toLowerCase().includes(q)) return false;
     return true;
   });
 }
 
 function renderQueues(rows) {
-  $('queues').innerHTML = QUEUES.map(t => {
-    const n = rows.filter(t.f).length;
-    return `<button class="tab ${t.id === queue ? 'act' : ''}" data-q="${t.id}">${t.name}<span class="b">${n.toLocaleString('ru-RU')}</span></button>`;
-  }).join('');
-  $('queues').querySelectorAll('.tab').forEach(b =>
-    b.onclick = () => { queue = b.dataset.q; page = 0; render(); });
+  const html = '<div class="radio-inputs">' + QUEUES.map(t => {
+    const checked = t.id === queue ? 'checked' : '';
+    return `<label class="radio">
+              <input type="radio" name="radio-queue" data-q="${t.id}" ${checked}>
+              <span class="name">${t.name}</span>
+            </label>`;
+  }).join('') + '</div>';
+  $('queues').innerHTML = html;
+  $('queues').querySelectorAll('input[type="radio"]').forEach(b =>
+    b.onchange = () => { queue = b.dataset.q; page = 0; render(); });
 }
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
-  {id: 'status',  name: 'Статус'},
-  {id: 'hint',    name: 'Подсказка'},
-  {id: 'doc_num', name: '№'},
-  {id: 'doc_date',name: 'Дата'},
-  {id: 'city',    name: 'Город'},
-  {id: 'client',  name: 'Контрагент'},
-  {id: 'amount',  name: 'Сумма'},
-  {id: 'stage',   name: 'Этап сделки'},
-  {id: 'in_stock',name: 'Товар'},
-  {id: 'next_step',name:'След. шаг'},
-  {id: 'plan_contact', name: 'План конт.'},
-  {id: 'reason',  name: 'Причина'},
-  {id: 'check_status', name: 'Проверка'},
-  {id: 'notes',   name: 'Примечания'},
-  {id: 'author',  name: 'Автор'},
-  {id: 'hist',    name: ''},
+  { id: 'status', name: 'Статус' },
+  { id: 'hint', name: 'Подсказка' },
+  { id: 'doc_num', name: '№' },
+  { id: 'doc_date', name: 'Дата' },
+  { id: 'city', name: 'Город' },
+  { id: 'client', name: 'Контрагент' },
+  { id: 'amount', name: 'Сумма' },
+  { id: 'stage', name: 'Этап сделки' },
+  { id: 'in_stock', name: 'Товар' },
+  { id: 'next_step', name: 'След. шаг' },
+  { id: 'plan_contact', name: 'План конт.' },
+  { id: 'reason', name: 'Причина' },
+  { id: 'check_status', name: 'Проверка' },
+  { id: 'notes', name: 'Примечания' },
+  { id: 'author', name: 'Автор' },
+  { id: 'hist', name: '' },
 ];
 
 function selectHtml(d, field, options, allowEmpty = true) {
@@ -258,7 +264,7 @@ function bindRowEvents() {
     el.onchange = async () => {
       const f = el.dataset.f;
       const v = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
-      await patch(el.dataset.k, {[f]: v});
+      await patch(el.dataset.k, { [f]: v });
     };
   });
   tb.querySelectorAll('button[data-hist]').forEach(b => b.onclick = () => showHist(b.dataset.hist));
@@ -267,23 +273,52 @@ function bindRowEvents() {
 async function patch(key, fields) {
   const user = $('user').value.trim();
   if (!user) { toast('Сначала выберите менеджера в шапке — без этого правки не сохраняются', true); render(); return; }
+
+  const chk = $('saveCheckbox');
+  const txt = $('saveStatusText');
+
+  if (chk) {
+    chk.checked = false; // toggle to red cross
+    txt.textContent = 'Сохранение...';
+    txt.style.color = '#2d79f3';
+  }
+
   try {
     const r = await fetch('/api/deal/' + encodeURIComponent(key), {
       method: 'PATCH',
-      headers: {'Content-Type': 'application/json', 'X-User': encodeURIComponent(user)},
+      headers: { 'Content-Type': 'application/json', 'X-User': encodeURIComponent(user) },
       body: JSON.stringify(fields),
     });
     if (!r.ok) {
-      if(r.status === 401) return location.href = '/login';
+      if (r.status === 401) return location.href = '/login';
       throw new Error((await r.json()).error || r.status);
     }
     const fresh = await r.json();
     const i = DATA.findIndex(d => d.key === key);
     if (i >= 0) DATA[i] = fresh;
+
+    if (chk) {
+      chk.checked = true; // toggle to green tick
+      txt.textContent = 'Сохранено';
+      txt.style.color = '#4caf50';
+      setTimeout(() => {
+        if (txt.textContent === 'Сохранено') {
+          txt.textContent = 'Сохранено';
+          txt.style.color = '#757575';
+        }
+      }, 2000);
+    }
+
     render();
     if (fresh.errors && fresh.errors.length) toast('Сохранено, но: ' + fresh.errors[0], true);
-    else toast('Сохранено ✓');
-  } catch (e) { toast('Ошибка сохранения: ' + e.message, true); }
+  } catch (e) {
+    if (chk) {
+      chk.checked = false; // keep red cross
+      txt.textContent = 'Ошибка';
+      txt.style.color = '#d32f2f';
+    }
+    toast(e.message, true);
+  }
 }
 
 async function showHist(key) {
@@ -291,7 +326,7 @@ async function showHist(key) {
   $('histKey').textContent = key.split('|')[0];
   $('histBody').innerHTML = rows.length
     ? '<table><tr><th>Когда</th><th>Кто</th><th>Поле</th><th>Было</th><th>Стало</th></tr>' +
-      rows.map(h => `<tr><td>${esc(h.ts)}</td><td>${esc(decodeURIComponent(h.user))}</td><td>${esc(h.field)}</td><td>${esc(h.old_val)}</td><td><b>${esc(h.new_val)}</b></td></tr>`).join('') + '</table>'
+    rows.map(h => `<tr><td>${esc(h.ts)}</td><td>${esc(decodeURIComponent(h.user))}</td><td>${esc(h.field)}</td><td>${esc(h.old_val)}</td><td><b>${esc(h.new_val)}</b></td></tr>`).join('') + '</table>'
     : '<p>Изменений ещё не было.</p>';
   $('histDlg').showModal();
 }
@@ -319,9 +354,11 @@ function renderBoss() {
   if (!window.Chart) return;
   const bar = (el, labels, data, color, horizontal) => charts.push(new Chart($(el), {
     type: 'bar',
-    data: {labels, datasets: [{data, backgroundColor: color}]},
-    options: {indexAxis: horizontal ? 'y' : 'x', plugins: {legend: {display: false}},
-      scales: {[horizontal ? 'x' : 'y']: {ticks: {callback: v => (v / 1e6) + ' млн'}}}},
+    data: { labels, datasets: [{ data, backgroundColor: color }] },
+    options: {
+      indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: false } },
+      scales: { [horizontal ? 'x' : 'y']: { ticks: { callback: v => (v / 1e6) + ' млн' } } }
+    },
   }));
 
   const stages = ['(нет этапа)', ...META.stages];
@@ -349,18 +386,20 @@ function renderBoss() {
   const topC = Object.entries(cities).sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 12);
   charts.push(new Chart($('chCities'), {
     type: 'bar',
-    data: {labels: topC.map(x => x[0]), datasets: [
-      {label: 'Активные', data: topC.map(x => x[1][0]), backgroundColor: '#3a7ca5'},
-      {label: 'Выдано', data: topC.map(x => x[1][1]), backgroundColor: '#2e9e5b'},
-    ]},
-    options: {scales: {x: {stacked: true}, y: {stacked: true, ticks: {callback: v => (v / 1e6) + ' млн'}}}, plugins: {legend: {position: 'bottom'}}},
+    data: {
+      labels: topC.map(x => x[0]), datasets: [
+        { label: 'Активные', data: topC.map(x => x[1][0]), backgroundColor: '#3a7ca5' },
+        { label: 'Выдано', data: topC.map(x => x[1][1]), backgroundColor: '#2e9e5b' },
+      ]
+    },
+    options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => (v / 1e6) + ' млн' } } }, plugins: { legend: { position: 'bottom' } } },
   }));
 
   // менеджеры
   const mgr = {};
   base.forEach(d => {
     const a = d.author || '(пусто)';
-    const m = mgr[a] = mgr[a] || {n: 0, sum: 0, act: 0, risk: 0, err: 0, over: 0, done: 0};
+    const m = mgr[a] = mgr[a] || { n: 0, sum: 0, act: 0, risk: 0, err: 0, over: 0, done: 0 };
     m.n++; m.sum += d.amount || 0;
     if (!d.is_closed) m.act++;
     if (d.level === 'risk') m.risk++;
@@ -398,7 +437,7 @@ function refresh() {
 function renderSettings() {
   const tbody = $('tblSpec').querySelector('tbody');
   const rows = (META.specialists || []).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  tbody.innerHTML = rows.map(s => 
+  tbody.innerHTML = rows.map(s =>
     `<tr>
       <td>${esc(s.name)}</td>
       <td>${esc(s.city)}</td>
@@ -410,11 +449,11 @@ function renderSettings() {
 async function delSpec(id) {
   if (!confirm('Удалить эту зону ответственности?')) return;
   try {
-    const r = await fetch('/api/specialists/' + id, {method: 'DELETE'});
+    const r = await fetch('/api/specialists/' + id, { method: 'DELETE' });
     if (!r.ok) throw new Error(await r.text());
     toast('Удалено ✓');
     await loadAll();
-  } catch(e) { toast('Ошибка: ' + e.message, true); }
+  } catch (e) { toast('Ошибка: ' + e.message, true); }
 }
 
 $('btnAddSpec').onclick = async () => {
@@ -423,14 +462,14 @@ $('btnAddSpec').onclick = async () => {
   try {
     const r = await fetch('/api/specialists', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, city})
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, city })
     });
     if (!r.ok) throw new Error((await r.json()).error || r.statusText);
     toast('Добавлено ✓');
     $('newSpecName').value = ''; $('newSpecCity').value = '';
     await loadAll();
-  } catch(e) { toast('Ошибка: ' + e.message, true); }
+  } catch (e) { toast('Ошибка: ' + e.message, true); }
 };
 
 $('fStage').onchange = () => { page = 0; refresh(); };
@@ -453,9 +492,11 @@ $('next').onclick = () => { page++; render(); };
 $('btnImport').onclick = async () => {
   const b = $('btnImport');
   b.disabled = true; b.textContent = '⏳ Импорт...';
+  // Покажем лоадер в таблице
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="16" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
   try {
-    const r = await fetch('/api/import', {method: 'POST'});
-    if(r.status === 401) return location.href = '/login';
+    const r = await fetch('/api/import', { method: 'POST' });
+    if (r.status === 401) return location.href = '/login';
     const s = await r.json();
     if (s.error) throw new Error(s.error);
     toast(`Импорт: новых ${s.new}, обновлено ${s.updated}`);
@@ -465,22 +506,22 @@ $('btnImport').onclick = async () => {
 };
 
 $('btnLogout').onclick = async () => {
-  await fetch('/api/auth/logout', {method: 'POST'});
+  await fetch('/api/auth/logout', { method: 'POST' });
   location.href = '/login';
 };
 
 $('btnChangePw').onclick = async () => {
   const np = $('newPw').value;
-  if(np.length < 4) return toast('Пароль слишком короткий', true);
+  if (np.length < 4) return toast('Пароль слишком короткий', true);
   try {
     const r = await fetch('/api/auth/change-password', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({new_password: np})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: np })
     });
-    if(!r.ok) throw new Error((await r.json()).error);
+    if (!r.ok) throw new Error((await r.json()).error);
     toast('Пароль изменен!');
     $('pwDlg').close();
-  } catch(e) { toast(e.message, true); }
+  } catch (e) { toast(e.message, true); }
 };
 
 loadAll();

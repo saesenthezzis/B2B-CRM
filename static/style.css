@@ -27,7 +27,7 @@ nav#modes{display:flex;gap:6px}
 #manualDates input{padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px}
 .tw{max-height:calc(100vh - 320px);overflow:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
 table{width:100%;border-collapse:collapse;font-size:12.6px}
-th{position:sticky;top:0;background:#f0f3f8;text-align:left;padding:7px 8px;border-bottom:2px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;z-index:5}
+.table th {position:sticky;top:0;background:#f5f7fa;text-align:left;padding:7px 8px;border-bottom:2px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;z-index:5}
 td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
 tr:hover td{background:#f7f9fd}
 tr.r-error td{background:#fdeef2}
