@@ -77,7 +77,7 @@ class _DbWrapper:
         else:
             statements = [s.strip() for s in sql_script.split(";") if s.strip()]
             if statements:
-                self.client.execute_batch(statements)
+                self.client.batch(statements)
     
     def commit(self):
         if self.is_sqlite:
@@ -145,7 +145,7 @@ CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 
 
 def db():
-    url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}")
+    url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
     auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
     con = _DbWrapper(url, auth_token)
     con.executescript(SCHEMA)
