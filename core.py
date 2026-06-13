@@ -432,14 +432,12 @@ def _sheet_rows(xlsx_path, sheet):
 
 
 def import_xlsx(xlsx_path=None, first=False):
-    """Импорт/обновление сделок. Возвращает статистику.
-
-    Правки менеджеров в БД никогда не затираются; менеджерские поля берутся
-    из xlsx только если в БД они ещё пусты. Изменение 1С-полей ставит флаг
-    UPDATE, новые строки — NEW (как в скриптах Google Sheets).
-    """
+    """Импорт/обновление сделок. Возвращает статистику."""
     import pandas as pd
     xlsx_path = xlsx_path or XLSX_PATH
+    if not os.path.exists(xlsx_path):
+        raise FileNotFoundError("Файл выгрузки из 1С не найден. Пожалуйста, запустите 'Обновить данные из 1С.bat' локально на вашем компьютере.")
+        
     con = db()
     cur = con.cursor()
     existing = {r["key"]: dict(r) for r in cur.execute("SELECT * FROM deals")}
