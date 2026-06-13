@@ -8,6 +8,9 @@ import os
 import sys
 from datetime import datetime
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, jsonify, request, send_from_directory
 
 import core
