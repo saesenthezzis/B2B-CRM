@@ -656,3 +656,75 @@ dialog button:hover { background: #333; }
 }
 #manualDates { display: none; gap: 8px; align-items: center; }
 #manualDates.show, .is-flex { display: flex !important; }
+
+/* ---------- Pending Row + Confirm/Discard Buttons ---------- */
+.row-pending td {
+  background: rgba(45,121,243,0.04) !important;
+}
+.row-pending {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.td-confirm {
+  width: 56px;
+  min-width: 56px;
+  text-align: center;
+  padding: 2px 4px !important;
+}
+
+.row-confirm-actions {
+  display: inline-flex;
+  gap: 4px;
+  animation: confirmSlideIn 0.25s ease-out;
+}
+@keyframes confirmSlideIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.row-confirm-btn,
+.row-discard-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+.row-confirm-btn svg,
+.row-discard-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.row-confirm-btn {
+  background: rgba(16,185,129,0.1);
+  color: #059669;
+  border: 1.5px solid rgba(5,150,105,0.25);
+}
+.row-confirm-btn:hover {
+  background: #059669;
+  color: #fff;
+  border-color: #059669;
+  box-shadow: 0 2px 8px rgba(5,150,105,0.35);
+  transform: scale(1.1);
+}
+.row-confirm-btn:active { transform: scale(0.95); }
+
+.row-discard-btn {
+  background: rgba(220,38,38,0.06);
+  color: #dc2626;
+  border: 1.5px solid rgba(220,38,38,0.18);
+}
+.row-discard-btn:hover {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+  box-shadow: 0 2px 8px rgba(220,38,38,0.3);
+  transform: scale(1.1);
+}
+.row-discard-btn:active { transform: scale(0.95); }

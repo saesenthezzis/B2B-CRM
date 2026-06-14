@@ -3,6 +3,7 @@ let META = null, DATA = [];
 let SPEC = {};               // имя специалиста B2B -> [его города]
 const ZONE = '__zone__';     // спец-значение фильтра «зона менеджера»
 let queue = 'new', page = 0, sortCol = 'amount', sortDir = -1;
+const PENDING = {};          // key -> { field: value, ... } буфер несохранённых правок
 const PAGE = 50;
 const $ = id => document.getElementById(id);
 const money = n => n == null ? '' : Math.round(n).toLocaleString('ru-RU');
@@ -185,6 +186,7 @@ const COLS = [
   { id: 'notes', name: 'Примечания' },
   { id: 'author', name: 'Автор' },
   { id: 'hist', name: '' },
+  { id: '_confirm', name: '' },
 ];
 
 function selectHtml(d, field, options, allowEmpty = true) {
@@ -225,6 +227,7 @@ function rowHtml(d) {
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="..."></td>
     <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
+    <td class="td-confirm">${PENDING[d.key] ? `<div class="row-confirm-actions"><button class="row-confirm-btn" data-commit="${esc(d.key)}" title="Сохранить изменения"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="row-discard-btn" data-discard="${esc(d.key)}" title="Отменить"><svg viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ''}</td>
   </tr>`;
 }
 
@@ -252,22 +255,54 @@ function render() {
   if (page >= pages) page = pages - 1;
   const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
   $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="16" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
+    pg.map(rowHtml).join('') || '<tr><td colspan="17" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
   bindRowEvents();
   $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
   $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
   $('totals').textContent = `${rows.length.toLocaleString('ru-RU')} сделок · ${mln(rows.reduce((s, d) => s + (d.amount || 0), 0))} тг`;
 }
 
+function bufferChange(key, field, value) {
+  if (!PENDING[key]) PENDING[key] = {};
+  PENDING[key][field] = value;
+  // подсветить строку и показать кнопки
+  const row = document.getElementById('r-' + cssKey(key));
+  if (row) {
+    row.classList.add('row-pending');
+    const cell = row.querySelector('.td-confirm');
+    if (cell && !cell.querySelector('.row-confirm-btn')) {
+      cell.innerHTML = `<div class="row-confirm-actions"><button class="row-confirm-btn" data-commit="${esc(key)}" title="Сохранить изменения"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="row-discard-btn" data-discard="${esc(key)}" title="Отменить"><svg viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>`;
+      cell.querySelector('.row-confirm-btn').onclick = () => commitRow(key);
+      cell.querySelector('.row-discard-btn').onclick = () => discardRow(key);
+    }
+  }
+}
+
+async function commitRow(key) {
+  const fields = PENDING[key];
+  if (!fields) return;
+  delete PENDING[key];
+  await patch(key, fields);
+}
+
+function discardRow(key) {
+  delete PENDING[key];
+  render();
+}
+
 function bindRowEvents() {
   const tb = $('tbl').querySelector('tbody');
+  // Буферизируем изменения вместо немедленного сохранения
   tb.querySelectorAll('select[data-f], input[data-f]').forEach(el => {
-    el.onchange = async () => {
+    el.onchange = () => {
       const f = el.dataset.f;
       const v = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value;
-      await patch(el.dataset.k, { [f]: v });
+      bufferChange(el.dataset.k, f, v);
     };
   });
+  // Привязка кнопок подтверждения/отмены (для рендера с уже pending строками)
+  tb.querySelectorAll('button[data-commit]').forEach(b => b.onclick = () => commitRow(b.dataset.commit));
+  tb.querySelectorAll('button[data-discard]').forEach(b => b.onclick = () => discardRow(b.dataset.discard));
   tb.querySelectorAll('button[data-hist]').forEach(b => b.onclick = () => showHist(b.dataset.hist));
   // Copy doc_num on click
   tb.querySelectorAll('.td-copy').forEach(td => {
@@ -284,6 +319,13 @@ function bindRowEvents() {
         setTimeout(() => tip.remove(), 1200);
       });
     };
+  });
+  // Подсветим строки с pending
+  tb.querySelectorAll('tr[id]').forEach(row => {
+    const key = row.id.replace('r-', '').replace(/_/g, match => match);
+    // Находим ключ из DATA
+    const dataKey = DATA.find(d => 'r-' + cssKey(d.key) === row.id)?.key;
+    if (dataKey && PENDING[dataKey]) row.classList.add('row-pending');
   });
 }
 
@@ -514,7 +556,7 @@ $('btnImport').onclick = async () => {
   const b = $('btnImport');
   b.disabled = true; b.textContent = '⏳ Импорт...';
   // Покажем лоадер в таблице
-  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="16" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="17" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
   try {
     const r = await fetch('/api/import', { method: 'POST' });
     if (r.status === 401) return location.href = '/login';
