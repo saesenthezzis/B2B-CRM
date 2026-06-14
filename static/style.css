@@ -44,6 +44,8 @@ body {
 }
 /* allow text selection in tables and inputs */
 td, input, textarea, select, .copy-text { user-select: text; }
+/* force Inter on all native form controls */
+input, select, textarea, button { font-family: inherit; }
 
 .app-nav {
   display: flex;
