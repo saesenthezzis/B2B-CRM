@@ -733,3 +733,99 @@ dialog button:hover { background: #333; }
   transform: scale(1.1);
 }
 .row-discard-btn:active { transform: scale(0.95); }
+
+/* ---------- Analytics Dashboard (Power BI-style) ---------- */
+.analytics-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.dash-layout {
+  display: flex;
+  gap: 16px;
+}
+.dash-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+}
+.dash-main {
+  flex: 1;
+  min-width: 0;
+}
+.dash-filter {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--color-hairline);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.dash-filter__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-ink-tertiary);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-hairline);
+}
+.dash-filter__list {
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.1) transparent;
+}
+.dash-filter__list::-webkit-scrollbar { width: 4px; }
+.dash-filter__list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
+.dash-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--color-ink);
+  transition: color 0.1s;
+}
+.dash-check:hover { color: var(--color-accent); }
+.dash-check input[type="checkbox"] {
+  accent-color: var(--color-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dash-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-card-trend {
+  margin-bottom: 12px;
+}
+.dash-grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.dash-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  color: var(--color-ink-tertiary);
+  font-size: 14px;
+  font-weight: 500;
+}
+@media (max-width: 1400px) { .dash-grid3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 900px) {
+  .dash-layout { flex-direction: column; }
+  .dash-sidebar { width: 100%; display: flex; gap: 12px; }
+  .dash-sidebar .dash-filter { flex: 1; margin-bottom: 0; }
+  .dash-grid3 { grid-template-columns: 1fr; }
+}
+
+

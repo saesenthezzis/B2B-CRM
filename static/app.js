@@ -482,6 +482,7 @@ document.querySelectorAll('.mode-tab').forEach(b => b.onclick = () => {
   mode = b.dataset.m;
   document.querySelectorAll('.mode-tab').forEach(x => x.classList.toggle('act', x === b));
   $('v-mgr').classList.toggle('hidden', mode !== 'mgr');
+  $('v-analytics').classList.toggle('hidden', mode !== 'analytics');
   $('v-boss').classList.toggle('hidden', mode !== 'boss');
   $('v-settings').classList.toggle('hidden', mode !== 'settings');
   refresh();
@@ -489,6 +490,7 @@ document.querySelectorAll('.mode-tab').forEach(b => b.onclick = () => {
 
 function refresh() {
   if (mode === 'mgr') render();
+  else if (mode === 'analytics') window.initDashboard?.();
   else if (mode === 'boss') renderBoss();
   else renderSettings();
 }
