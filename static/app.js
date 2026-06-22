@@ -104,7 +104,7 @@ function applyManagerZone(save = true) {
 /* ---------- очереди ---------- */
 const QUEUES = [
   { id: 'new', name: 'Новые', f: d => d.flag === 'NEW' || d.level === 'new' },
-  { id: 'action', name: 'Требуют действия', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
+  { id: 'action', name: 'Сделать сегодня', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
   { id: 'done', name: 'Закрытые', f: d => d.is_closed && d.level === 'done' },
   { id: 'lost', name: 'Без продажи', f: d => d.is_closed && d.level !== 'done' },
   { id: 'all', name: 'Все', f: () => true },
@@ -158,9 +158,10 @@ function baseFiltered() {
 function renderQueues(rows) {
   const html = '<div class="radio-inputs">' + QUEUES.map(t => {
     const checked = t.id === queue ? 'checked' : '';
+    const count = rows.filter(t.f).length;
     return `<label class="radio">
               <input type="radio" name="radio-queue" data-q="${t.id}" ${checked}>
-              <span class="name">${t.name}</span>
+              <span class="name">${t.name} <b class="queue-count">${count}</b></span>
             </label>`;
   }).join('') + '</div>';
   $('queues').innerHTML = html;
@@ -170,19 +171,17 @@ function renderQueues(rows) {
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
-  { id: 'status', name: 'Статус' },
-  { id: 'hint', name: 'Подсказка' },
-  { id: 'doc_num', name: '№' },
+  { id: 'hint', name: 'Действие' },
+  { id: 'doc_num', name: 'Документ' },
   { id: 'doc_date', name: 'Дата' },
   { id: 'city', name: 'Город' },
-  { id: 'client', name: 'Контрагент' },
+  { id: 'client', name: 'Клиент' },
   { id: 'amount', name: 'Сумма' },
-  { id: 'stage', name: 'Этап сделки' },
-  { id: 'in_stock', name: 'Проверка товара' },
-  { id: 'plan_contact', name: 'Связаться с клиентом' },
+  { id: 'stage', name: 'Этап' },
+  { id: 'in_stock', name: 'Товар' },
+  { id: 'plan_contact', name: 'Срок' },
   { id: 'reason', name: 'Причина' },
-  { id: 'check_status', name: 'Проверка' },
-  { id: 'notes', name: 'Примечания' },
+  { id: 'notes', name: 'Заметка' },
   { id: 'author', name: 'Автор' },
   { id: 'hist', name: '' },
   { id: '_confirm', name: '' },
@@ -197,33 +196,42 @@ function selectHtml(d, field, options, allowEmpty = true) {
   </select>`;
 }
 
+function paymentBadge(d) {
+  const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
+  if (!paid) return '';
+  const amount = Number(d.amount || 0);
+  const paidAmount = Number(d.payment_amount || 0);
+  const label = amount && paidAmount && paidAmount < amount ? 'Частично' : 'Оплачено';
+  return `<span class="payment-badge">${label}</span>`;
+}
+
 function rowHtml(d) {
   const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
-  const wa = (d.phones || []).map(p => `<a class="wa" target="_blank" href="https://wa.me/${p}" title="WhatsApp">💬 ${p.slice(-4)}</a>`).join('');
+  const docStatus = `<span class="doc-status ${stClass}">${esc(d.cur_status)}</span>${flag}`;
+  const wa = (d.phones || []).map(p => '<a class="wa" target="_blank" href="https://wa.me/' + p + '" title="WhatsApp">💬' + p.slice(-4) + '</a>').join('');
   const dateStr = d.doc_date ? d.doc_date.slice(0, 10).split('-').reverse().join('.') : '';
   const planVal = d.plan_contact ? d.plan_contact.slice(0, 10).split('-').reverse().join('.') : '';
   const planColorClass = d.plan_color === 'green' ? 'plan-green' : d.plan_color === 'yellow' ? 'plan-yellow' : 'plan-red';
   const reason = d.stage === 'Не состоялась'
     ? selectHtml(d, 'reject_reason', META.reject_reasons)
-    : (d.stage === 'Удалён' || d.cur_status === 'Удалён')
+    : (d.stage === 'Удалён' || d.cur_status === 'Удалён' || d.cur_status === 'Удален')
       ? selectHtml(d, 'delete_reason', META.delete_reasons)
       : '<span class="cl">—</span>';
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
+  const actionMark = d.overdue_contact ? '<span class="late-mark" title="Срок прошел">Просрочено</span>' : '';
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
-    <td><span class="badge ${stClass}">${esc(d.cur_status)}</span>${flag}</td>
-    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}${d.overdue_contact ? ' · ⚠️' : ''}</span></td>
-    <td class="td-copy" title="${esc(d.doc)}"><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
+    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span>${actionMark}</td>
+    <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td>${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
     <td>${esc(d.city || '')}</td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
-    <td class="sum">${money(d.amount)}</td>
+    <td class="sum">${money(d.amount)}${paymentBadge(d)}</td>
     <td>${selectHtml(d, 'stage', META.stages)}</td>
     <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено", "Товар есть"], false)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
     <td>${reason}</td>
-    <td>${esc(d.check_status || 'Новая')}</td>
-    <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="..."></td>
+    <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="Заметка"></td>
     <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
     <td class="td-confirm">${PENDING[d.key] ? `<div class="row-confirm-actions"><button class="row-confirm-btn" data-commit="${esc(d.key)}" title="Сохранить изменения"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="row-discard-btn" data-discard="${esc(d.key)}" title="Отменить"><svg viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ''}</td>
@@ -254,7 +262,7 @@ function render() {
   if (page >= pages) page = pages - 1;
   const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
   $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="16" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
+    pg.map(rowHtml).join('') || '<tr><td colspan="14" style="text-align:center;color:#888;padding:22px">Нет записей</td></tr>';
   bindRowEvents();
   $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
   $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
@@ -557,7 +565,7 @@ $('btnImport').onclick = async () => {
   const b = $('btnImport');
   b.disabled = true; b.textContent = '⏳ Импорт...';
   // Покажем лоадер в таблице
-  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="16" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="14" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
   try {
     const r = await fetch('/api/import', { method: 'POST' });
     if (r.status === 401) return location.href = '/login';
