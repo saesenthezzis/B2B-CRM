@@ -14,7 +14,7 @@
 import os
 import re
 import sqlite3
-import libsql_client
+import libsql as libsql_exp
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
@@ -24,11 +24,17 @@ class _DummyCursor:
     def __init__(self, rs):
         self.rs = rs
         self._rows = []
-        if rs and hasattr(rs, 'rows'):
-            columns = rs.columns
-            for row in rs.rows:
-                d = {columns[i]: row[i] for i in range(len(columns))}
-                self._rows.append(d)
+        if rs:
+            if hasattr(rs, 'rows') and hasattr(rs, 'columns'):
+                columns = rs.columns
+                for row in rs.rows:
+                    d = {columns[i]: row[i] for i in range(len(columns))}
+                    self._rows.append(d)
+            elif hasattr(rs, 'description') and rs.description:
+                columns = [col[0] for col in rs.description]
+                for row in rs.fetchall():
+                    d = {columns[i]: row[i] for i in range(len(columns))}
+                    self._rows.append(d)
         self._idx = 0
 
     def fetchone(self):
@@ -53,7 +59,10 @@ class _DbWrapper:
             self.con.row_factory = sqlite3.Row
             self.is_sqlite = True
         else:
-            self.client = libsql_client.create_client_sync(url, auth_token=auth_token)
+            self.client = libsql_exp.connect(
+                database=url,
+                auth_token=auth_token,
+            )
             self.is_sqlite = False
     
     def cursor(self):
@@ -67,17 +76,52 @@ class _DbWrapper:
                 return self.con.execute(sql, params)
             return self.con.execute(sql)
         else:
-            args = params if params is not None else []
-            rs = self.client.execute(sql, args)
-            return _DummyCursor(rs)
+            args = list(params) if params is not None else []
+            result = self.client.execute(sql, args)
+            return _DummyCursor(result)
 
     def executescript(self, sql_script):
         if self.is_sqlite:
             self.con.executescript(sql_script)
         else:
-            statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-            if statements:
-                self.client.batch(statements)
+            self.client.executescript(sql_script)
+    
+    def execute_batch(self, statements_list):
+        """Отправляет список (sql, params) батчами по 500 — минимум HTTP round-trips."""
+        if not statements_list:
+            return
+        if self.is_sqlite:
+            for sql, params in statements_list:
+                if params is not None:
+                    self.con.execute(sql, params)
+                else:
+                    self.con.execute(sql)
+            self.con.commit()
+        else:
+            batch_size = 500
+            for i in range(0, len(statements_list), batch_size):
+                chunk = statements_list[i : i + batch_size]
+                parts = []
+                for sql, params in chunk:
+                    if params is None:
+                        parts.append(sql)
+                    elif isinstance(params, dict):
+                        s = sql
+                        # Сортируем ключи по длине в порядке убывания, чтобы предотвратить замену подстрок (например, :doc внутри :doc_num)
+                        for k in sorted(params.keys(), key=len, reverse=True):
+                            v = params[k]
+                            escaped = "NULL" if v is None else "'{}'".format(
+                                str(v).replace("'", "''"))
+                            s = s.replace(f":{k}", escaped)
+                        parts.append(s)
+                    else:
+                        s = sql
+                        for v in params:
+                            escaped = "NULL" if v is None else "'{}'".format(
+                                str(v).replace("'", "''"))
+                            s = s.replace("?", escaped, 1)
+                        parts.append(s)
+                self.client.executescript(";\n".join(parts))
     
     def commit(self):
         if self.is_sqlite:
@@ -91,7 +135,7 @@ class _DbWrapper:
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "rmko.db")
-XLSX_PATH = os.path.join(BASE, "Рабочее место Корпоративного отдела.xlsx")
+XLSX_PATH = os.path.join(os.path.dirname(BASE), "Рабочее место Корпоративного отдела .xlsx")
 
 # --- справочники (ИнструкцияДляMain + бэклог листа «Вопросы») ---
 STAGES = ["Счет отправлен", "Оплата есть", "Закрыто", "Не состоялась", "Удалён",
@@ -107,20 +151,14 @@ REJECT_REASONS = ["высокая цена", "выбрали другого по
                   "не оплатили", "нет новых РН", "другое"]
 DELETE_REASONS = ["счет создан ошибочно", "замена счета", "пересоздан документ",
                   "дубль", "другое"]
-# «Проверка» — автоматический статус (вычисляется в derive, не редактируется)
-CHECK_STATUSES = ["Новая", "В работе", "Закрыто", "Закрыто автоматически"]
-# «Проверка товара» — выпадающий список (редактирует менеджер)
-GOODS_CHECK = ["Ожидает проверки", "Проверено", "Товар есть"]
-GOODS_CHECK_DEFAULT = "Ожидает проверки"
+CHECK_STATUSES = ["Новая", "Отработано", "Закрыто автоматически"]
 
 CLOSED_STAGES = {"Закрыто", "Не состоялась", "Удалён", "Заменена"}
 
-# поля, которые редактирует менеджер (разрешены в PATCH).
-# stage / next_step / plan_contact / check_status / in_stock / reject_reason
-# исключены — теперь это либо вычисляемые (авто), либо удалённые из интерфейса поля.
+# поля, которые редактирует менеджер (разрешены в PATCH)
 EDITABLE = {
-    "last_contact", "close_date",
-    "delete_reason", "notes", "goods_check",
+    "stage", "last_contact", "close_date",
+    "reject_reason", "delete_reason", "notes", "in_stock",
     "closing_docs", "delivery", "contract_num", "lead_source", "mgr_comment",
 }
 
@@ -132,12 +170,12 @@ CREATE TABLE IF NOT EXISTS deals (
     doc TEXT, doc_num TEXT, created_at TEXT, doc_date TEXT,
     client TEXT, amount REAL, contacts TEXT, comment_1c TEXT,
     deleted INTEGER DEFAULT 0, posted INTEGER DEFAULT 0, reserved INTEGER DEFAULT 0,
+    status_1c TEXT,
+    payment_amount REAL, payment_source TEXT, payment_date TEXT,
+    has_payment INTEGER DEFAULT 0, invoice_basis TEXT,
     stage TEXT, next_step TEXT, plan_contact TEXT, last_contact TEXT,
     close_date TEXT, reject_reason TEXT, delete_reason TEXT, notes TEXT,
     check_status TEXT, in_stock INTEGER, closing_docs INTEGER, delivery TEXT,
-    goods_check TEXT DEFAULT 'Ожидает проверки',
-    status_1c TEXT, payment_amount REAL, payment_source TEXT,
-    payment_date TEXT, has_payment INTEGER DEFAULT 0,
     contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
     flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
     updated_at TEXT, updated_by TEXT
@@ -172,43 +210,42 @@ CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 """
 
-
-_migrated = False
-
-# колонки, которые могли появиться позже схемы — догоняем ALTER-ом на живой БД
-_ADDED_COLUMNS = {
-    "goods_check": "TEXT DEFAULT 'Ожидает проверки'",
-    "status_1c": "TEXT",
-    "payment_amount": "REAL",
-    "payment_source": "TEXT",
-    "payment_date": "TEXT",
-    "has_payment": "INTEGER DEFAULT 0",
-}
+# Миграции для добавления новых колонок в существующую БД
+_MIGRATIONS = [
+    "ALTER TABLE deals ADD COLUMN status_1c TEXT",
+    "ALTER TABLE deals ADD COLUMN payment_amount REAL",
+    "ALTER TABLE deals ADD COLUMN payment_source TEXT",
+    "ALTER TABLE deals ADD COLUMN payment_date TEXT",
+    "ALTER TABLE deals ADD COLUMN has_payment INTEGER DEFAULT 0",
+    "ALTER TABLE deals ADD COLUMN invoice_basis TEXT",
+]
 
 
-def _ensure_migrations(con):
-    """Идемпотентно догоняем схему на уже существующей БД (в т.ч. Turso),
-    где CREATE TABLE IF NOT EXISTS новые колонки не добавляет."""
-    global _migrated
-    if _migrated:
-        return
+def _run_migrations(con):
+    """Добавить новые колонки в существующую таблицу deals (игнорирует дубли)."""
+    for sql in _MIGRATIONS:
+        try:
+            con.execute(sql)
+        except Exception:
+            pass  # колонка уже существует
     try:
-        cols = {r["name"] for r in con.execute("PRAGMA table_info(deals)")}
-        for name, ddl in _ADDED_COLUMNS.items():
-            if name not in cols:
-                con.execute(f"ALTER TABLE deals ADD COLUMN {name} {ddl}")
         con.commit()
-    except Exception as e:
-        print("MIGRATION WARNING:", e)
-    _migrated = True
+    except Exception:
+        pass
+
+
+_schema_applied = False
 
 
 def db():
+    global _schema_applied
     url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
     auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
     con = _DbWrapper(url, auth_token)
-    con.executescript(SCHEMA)
-    _ensure_migrations(con)
+    if not _schema_applied:
+        con.executescript(SCHEMA)
+        _run_migrations(con)
+        _schema_applied = True
     return con
 
 
@@ -294,20 +331,6 @@ def opt_bool(v):
     return None
 
 
-def status_flags(status_text):
-    """В новой выгрузке 1С нет отдельных колонок ПометкаУдаления/Проведен/Резерв —
-    есть одна колонка «Статус» (Выдан / Резерв / Удален). Разворачиваем её обратно
-    в флаги, чтобы cur_status и остальная логика работали без изменений."""
-    s = (clean_text(status_text) or "").lower()
-    if s.startswith("удал"):                    # Удален / Удалён
-        return {"deleted": 1, "posted": 0, "reserved": 0}
-    if s.startswith("резерв"):                  # Резерв (проведён, но в резерве)
-        return {"deleted": 0, "posted": 1, "reserved": 1}
-    if s.startswith("выдан"):                   # Выдан (товар выдан)
-        return {"deleted": 0, "posted": 1, "reserved": 0}
-    return {"deleted": 0, "posted": 0, "reserved": 0}
-
-
 def workdays_between(d_from, d_to):
     """Рабочие дни (без сб/вс) между датами, минимум 0."""
     if not d_from:
@@ -347,6 +370,14 @@ def phones(contacts):
 
 # ---------------- бизнес-логика статусов ----------------
 
+# Маппинг из нового поля «Статус» 1С → внутренние флаги (deleted, posted, reserved)
+STATUS_FROM_1C = {
+    "Выдан":  {"deleted": 0, "posted": 1, "reserved": 0},
+    "Резерв": {"deleted": 0, "posted": 1, "reserved": 1},
+    "Удален": {"deleted": 1, "posted": 0, "reserved": 0},
+    "Прочее": {"deleted": 0, "posted": 0, "reserved": 0},
+}
+
 # Лист «Статусы»: текущий статус определяется флагами 1С
 # (ПометкаУдаления / Проведен / Резерв). Порядок — как в таблице.
 STATUS_RULES = [
@@ -358,6 +389,11 @@ STATUS_DELETED = "Удален"  # написание статуса — как 
 
 
 def cur_status(d):
+    # Новый формат: если есть прямой статус из 1С — используем его
+    status_1c = d.get("status_1c")
+    if status_1c and status_1c in STATUS_FROM_1C:
+        return status_1c
+    # Старый формат: вычисляем из флагов deleted/posted/reserved
     deleted, posted, reserved = int(bool(d["deleted"])), int(bool(d["posted"])), int(bool(d["reserved"]))
     for name, c in STATUS_RULES:
         if c["deleted"] == deleted and c["posted"] == posted and c["reserved"] == reserved:
@@ -370,68 +406,105 @@ def cur_status(d):
     return "Резерв"
 
 
-def derive(d, today=None, hist_count=0):
-    """Вычислить производные поля сделки.
-
-    Этап сделки убран — статус/подсказка строятся по статусу 1С (cur_status)
-    и факту оплаты (ЕстьОплата), плюс срок в рабочих днях.
-    """
+def derive(d, today=None, user_action_keys=None):
+    """Вычислить производные поля сделки по правилам ИнструкцииДляMain."""
     today = today or date.today()
     st = cur_status(d)
-    has_payment = bool(d.get("has_payment"))
-    # «Товар есть» в колонке «Проверка товара» = товар в наличии
-    goods_check = d.get("goods_check") or GOODS_CHECK_DEFAULT
-    in_stock = bool(d["in_stock"]) or goods_check == "Товар есть"
+    stage = d["stage"] or ""
+    
+    in_stock_val = d.get("in_stock") or "Ожидает проверки"
+    in_stock_ok = in_stock_val in ("Проверено", "Товар есть")
+    
     wd = workdays_between(d["doc_date"] or d["created_at"], today)
 
-    errors = []
+    # 1. Автоматический План конт. = дата документа + 2 дня
+    doc_date_str = d.get("doc_date") or d.get("created_at")
+    plan_contact = None
+    plan_color = ""
+    if doc_date_str:
+        try:
+            doc_dt = datetime.strptime(doc_date_str[:10], "%Y-%m-%d")
+            plan_contact = (doc_dt + timedelta(days=2)).strftime("%Y-%m-%d")
+            
+            # Логика окрашивания
+            today_str = today.strftime("%Y-%m-%d")
+            plan_contact_str = plan_contact[:10]
+            if today_str < plan_contact_str:
+                plan_color = "green"
+            elif today_str == plan_contact_str:
+                plan_color = "yellow"
+            else:
+                plan_color = "red"
+        except ValueError:
+            pass
 
-    # подсказка (что происходит со сделкой и что делать) — без «Этапа сделки»
-    if st == "Удален":
-        hint, level = "Без продажи (удалена в 1С)", "closed"
-    elif st == "Выдан":
+    # 2. Автоматический статус Проверка
+    has_user_action = False
+    if user_action_keys is not None:
+        has_user_action = d["key"] in user_action_keys
+    
+    is_posted = bool(d.get("posted"))
+    if is_posted:
+        chk_status = "Закрыто" if has_user_action else "Закрыто автоматически"
+    else:
+        chk_status = "В работе" if has_user_action else "Новая"
+
+    errors = []
+    if stage == "Закрыто" and (not in_stock_ok or not d["close_date"]):
+        need = []
+        if not in_stock_ok:
+            need.append("✔ товар в наличии (Проверено / Товар есть)")
+        if not d["close_date"]:
+            need.append("дата закрытия")
+        errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
+    if stage == "Удалён":
+        if not d["delete_reason"]:
+            errors.append("Удалён: не указана причина удаления")
+        if not d["close_date"]:
+            errors.append("Удалён: не указана дата удаления")
+    if stage == "Не состоялась":
+        if not d["reject_reason"]:
+            errors.append("Не состоялась: не указана причина отказа")
+        if not d["close_date"]:
+            errors.append("Не состоялась: не указана дата")
+    if st in ("Удалён", "Удален") and stage not in ("Удалён", "Не состоялась", "Заменена"):
+        errors.append("РН удалена в 1С — выбрать этап «Удалён» или «Не состоялась» и причину")
+
+    # подсказка (что происходит со сделкой и что делать)
+    if errors:
+        hint, level = " · ".join(errors), "error"
+    elif st in ("Удалён", "Удален") or stage in ("Удалён", "Не состоялась"):
+        hint, level = "Закрыта без продажи", "closed"
+    elif stage == "Заменена":
+        hint, level = "Заменена другой РН", "closed"
+    elif st == "Выдан" or (stage == "Закрыто" and in_stock_ok):
         hint, level = "Товар выдан", "done"
-    elif has_payment and in_stock:
-        hint, level = "Оплачено — выдать товар", "ready"
-    elif has_payment:
-        hint, level = "Оплачено — ожидаем товар", "paid"
-    elif wd >= 3:
+    elif stage == "Оплата есть" and in_stock_ok:
+        hint, level = "Оплачена, выдать товар", "ready"
+    elif stage == "Оплата есть":
+        hint, level = "Ожидаем товар", "paid"
+    elif stage == "Счет отправлен" and wd >= 3:
         hint, level = "Связаться по оплате", "risk"
-    elif wd >= 2:
+    elif (stage == "Счет отправлен" or st == "Резерв") and wd >= 2:
         hint, level = "Требует контроля", "warn"
+    elif stage == "Сервис":
+        hint, level = "Сервисная РН", "info"
+    elif not stage and st == "Резерв":
+        hint, level = 'Не указан "Этап сделки"', "new"
     else:
         hint, level = "В работе", "info"
 
-    # «Связаться с клиентом»: авто = дата сделки + 2 дня (нередактируемо).
-    # Цвет: сегодня < даты — зелёный, == — жёлтый, > — красный.
-    contact_date, contact_color = None, ""
-    base_date = (d["doc_date"] or d["created_at"] or "")[:10]
-    try:
-        cd = datetime.strptime(base_date, "%Y-%m-%d").date() + timedelta(days=2)
-        contact_date = cd.strftime("%Y-%m-%d")
-        contact_color = "green" if today < cd else ("yellow" if today == cd else "red")
-    except ValueError:
-        pass
-
-    # «Проверка» — автоматический статус по истории изменений и статусу 1С.
-    posted = bool(d["posted"])
-    if posted and hist_count == 0:
-        check_status = "Закрыто автоматически"
-    elif posted and hist_count > 0:
-        check_status = "Закрыто"
-    elif hist_count > 0:
-        check_status = "В работе"
-    else:
-        check_status = "Новая"
-
-    overdue = bool(contact_color == "red" and level not in ("done", "closed"))
+    # Сверяем overdue по plan_contact
+    overdue = bool(plan_contact and plan_contact[:10] < today.strftime("%Y-%m-%d")
+                   and level not in ("done", "closed"))
     closed = level in ("done", "closed") and not errors
     return {
         "cur_status": st, "hint": hint, "level": level, "errors": errors,
         "workdays": wd, "overdue_contact": overdue, "is_closed": closed,
-        "contact_date": contact_date, "contact_color": contact_color,
-        "check_status": check_status, "has_payment": has_payment,
         "phones": phones(d["contacts"]),
+        "plan_contact": plan_contact,
+        "plan_color": plan_color,
+        "check_status": chk_status,
     }
 
 
@@ -450,23 +523,61 @@ COLMAP_1C = {
     "Территория": "territory", "Город": "city", "Филиал": "branch", "Автор": "author",
     "Документ": "doc", "НомерДокумента": "doc_num", "Контрагент": "client",
     "Контакты": "contacts", "Комментарий": "comment_1c",
+    "СчетОснование": "invoice_basis", "ИсточникОплаты": "payment_source",
 }
+def parse_in_stock(v):
+    s = clean_text(v)
+    if not s:
+        return "Ожидает проверки"
+    if s in ("Да", "1", "1.0", "Есть", "True", "true", "ИСТИНА", "Товар есть"):
+        return "Товар есть"
+    if s in ("Проверено", "проверено"):
+        return "Проверено"
+    if s in ("Ожидает проверки", "ожидает проверки"):
+        return "Ожидает проверки"
+    return "Ожидает проверки"
+
 COLMAP_MGR = {
-    # «Этап сделки» и «Следующий шаг» убраны из логики проекта
-    "Дата запланированного контакта": ("plan_contact", parse_date),
+    "Этап сделки": ("stage", clean_text),
     "Дата посл. контакта": ("last_contact", parse_date),
     "Дата закрытия|удаления": ("close_date", parse_date),
     "Причина отказа": ("reject_reason", clean_text),
     "Причина удаления": ("delete_reason", clean_text),
     "Примечания": ("notes", clean_text),
-    "Товар в наличии": ("in_stock", opt_bool),
+    "Товар в наличии": ("in_stock", parse_in_stock),
     "Закрывающие документы": ("closing_docs", opt_bool),
     "Доставка": ("delivery", clean_text),
     "Номер договора": ("contract_num", clean_text),
     "Источник лида": ("lead_source", clean_text),
 }
 TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c", "deleted", "posted",
-              "reserved", "client", "status_1c", "has_payment", "payment_amount"]
+              "reserved", "client", "status_1c", "payment_amount", "has_payment",
+              "payment_source", "payment_date", "invoice_basis"]
+
+# Колонки, загружаемые при старте импорта — только те, что нужны в _process_import_df
+_EXISTING_COLS = (
+    "key, territory, city, branch, author, doc, amount, doc_date, "
+    "contacts, comment_1c, deleted, posted, reserved, client, status_1c, "
+    "payment_amount, payment_source, payment_date, has_payment, "
+    "invoice_basis, stage, last_contact, close_date, reject_reason, "
+    "delete_reason, notes, in_stock, closing_docs, delivery, "
+    "contract_num, lead_source, flag"
+)
+
+
+def _normalize(v):
+    """Нормализация значения для сравнения: убирает различия в типах (float vs str и т.д.)."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if s in ("", "None", "nan", "NaT", "none", "nat"):
+        return None
+    try:
+        f = float(s)
+        # Если число целое — сравниваем как int, чтобы "1500.0" == 1500
+        return int(f) if f == int(f) else f
+    except (ValueError, OverflowError):
+        return s
 
 
 def _sheet_rows(xlsx_path, sheet):
@@ -476,111 +587,214 @@ def _sheet_rows(xlsx_path, sheet):
     return df
 
 
+def _process_import_df(df, con, existing, stats, now, first, seen):
+    """Обработка одного DataFrame сделок (общая логика для xlsx и csv)."""
+    if "НомерДокумента" not in df.columns:
+        return
+    
+    stmts = []
+    
+    for _, r in df.iterrows():
+        num = clean_text(r.get("НомерДокумента"))
+        created = parse_dt(r.get("ДатаСоздания"))
+        if not num or not created:
+            stats["skipped"] += 1
+            continue
+        key = f"{num}|{created[:10]}"
+        if key in seen:  # дубли в выгрузке игнорируем («Что нового» 30.03)
+            continue
+        seen.add(key)
+
+        vals = {c: clean_text(r.get(src)) for src, c in COLMAP_1C.items()}
+        vals.update({
+            "key": key, "doc_num": num, "created_at": created,
+            "doc_date": parse_dt(r.get("ДатаДокумента")),
+            "amount": parse_amount(r.get("Сумма")),
+        })
+
+        # Новый формат 1С: поле «Статус» вместо трёх флагов
+        status_raw = clean_text(r.get("Статус"))
+        if status_raw and status_raw in STATUS_FROM_1C:
+            flags = STATUS_FROM_1C[status_raw]
+            vals["status_1c"] = status_raw
+            vals["deleted"] = flags["deleted"]
+            vals["posted"] = flags["posted"]
+            vals["reserved"] = flags["reserved"]
+        else:
+            # Старый формат: три отдельных флага
+            vals["deleted"] = yes(r.get("ПометкаУдаления"))
+            vals["posted"] = yes(r.get("Проведен"))
+            vals["reserved"] = yes(r.get("Резерв"))
+
+        # Поля оплаты (новый формат)
+        if "Оплата" in df.columns:
+            vals["payment_amount"] = parse_amount(r.get("Оплата"))
+        if "ДатаОплаты" in df.columns:
+            vals["payment_date"] = parse_dt(r.get("ДатаОплаты"))
+        if "ЕстьОплата" in df.columns:
+            vals["has_payment"] = yes(r.get("ЕстьОплата"))
+        mgr_vals = {}
+        for src, (cl, fn) in COLMAP_MGR.items():
+            if src in df.columns:
+                mgr_vals[cl] = fn(r.get(src))
+
+        old = existing.get(key)
+        if old is None:
+            row = dict(vals)
+            row.update({k: v for k, v in mgr_vals.items() if v is not None})
+            row.setdefault("check_status", "Новая")
+            row["flag"] = "" if first else "NEW"
+            row["fixed_at"] = now
+            cols = ", ".join(row)
+            stmts.append((f"INSERT INTO deals ({cols}) VALUES ({', '.join(':'+c for c in row)})", row))
+            stats["new"] += 1
+        else:
+            changes = {}
+            for c in TRACKED_1C + ["territory", "city", "branch", "author", "doc"]:
+                raw_nv = vals.get(c)
+                raw_ov = old.get(c)
+                # Нормализуем перед сравнением — устраняет ложные UPDATE из-за типов
+                if _normalize(raw_nv) != _normalize(raw_ov):
+                    if raw_nv is not None:
+                        changes[c] = raw_nv
+            # менеджерские поля — только если в БД пусто
+            for c, nv in mgr_vals.items():
+                if nv is not None and (old.get(c) is None or old.get(c) == ""):
+                    changes[c] = nv
+            if changes:
+                tracked_changed = any(c in TRACKED_1C for c in changes)
+                if tracked_changed and old.get("flag") != "NEW":
+                    changes["flag"] = "UPDATE"
+                    changes["fixed_at"] = now
+                    for c in changes:
+                        if c in TRACKED_1C:
+                            stmts.append((
+                                "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) "
+                                "VALUES (?,?,?,?,?,?)",
+                                (key, c, str(old.get(c)), str(changes[c]), "1С-импорт", now)))
+                sets = ", ".join(f"{c}=:{c}" for c in changes)
+                changes["key"] = key
+                stmts.append((f"UPDATE deals SET {sets} WHERE key=:key", changes))
+                stats["updated"] += 1
+            else:
+                stats["unchanged"] += 1
+
+    con.execute_batch(stmts)
+
+
+def _finalize_import(con, now):
+    """Автозаполнение для выданных накладных + обновление meta.
+    
+    Все 4 запроса отправляются одним батчем — один HTTP round-trip вместо четырёх.
+    """
+    con.execute_batch([
+        (
+            """UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
+               WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        (
+            """UPDATE deals SET next_step='Закрыто автоматически'
+               WHERE (next_step IS NULL OR next_step='')
+                 AND posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        (
+            """UPDATE deals SET stage='Закрыто', in_stock=1,
+                      check_status='Закрыто автоматически'
+               WHERE posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        ("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,)),
+    ])
+    con.commit()
+
+
 def import_xlsx(xlsx_path=None, first=False):
-    """Импорт/обновление сделок. Возвращает статистику."""
+    """Импорт/обновление сделок из xlsx. Возвращает статистику."""
     import pandas as pd
     xlsx_path = xlsx_path or XLSX_PATH
     if not os.path.exists(xlsx_path):
         raise FileNotFoundError("Файл выгрузки из 1С не найден. Пожалуйста, запустите 'Обновить данные из 1С.bat' локально на вашем компьютере.")
-        
+
     con = db()
-    cur = con.cursor()
-    existing = {r["key"]: dict(r) for r in cur.execute("SELECT * FROM deals")}
+    existing = {
+        r["key"]: dict(r)
+        for r in con.execute(f"SELECT {_EXISTING_COLS} FROM deals")
+    }
     first = first or not existing
 
     stats = {"new": 0, "updated": 0, "unchanged": 0, "skipped": 0}
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    sheets = []
     xl = pd.ExcelFile(xlsx_path)
-    # предпочитаем листы main/Import, иначе берём все листы файла (напр. «Лист1»)
-    sheets = [s for s in ("main", "Import") if s in xl.sheet_names]
-    if not sheets:
-        sheets = list(xl.sheet_names)
+    # Новый формат: один лист «Лист1»
+    if "Лист1" in xl.sheet_names:
+        sheets.append("Лист1")
+    # Старый формат: листы «main» и «Import»
+    if "main" in xl.sheet_names:
+        sheets.append("main")
+    if "Import" in xl.sheet_names:
+        sheets.append("Import")
 
     seen = set()
     for sheet in sheets:
         df = _sheet_rows(xlsx_path, sheet)
-        if "НомерДокумента" not in df.columns:
-            continue
-        for _, r in df.iterrows():
-            num = clean_text(r.get("НомерДокумента"))
-            created = parse_dt(r.get("ДатаСоздания"))
-            if not num or not created:
-                stats["skipped"] += 1
-                continue
-            key = f"{num}|{created[:10]}"
-            if key in seen:  # дубли в выгрузке игнорируем («Что нового» 30.03)
-                continue
-            seen.add(key)
+        _process_import_df(df, con, existing, stats, now, first, seen)
 
-            vals = {c: clean_text(r.get(src)) for src, c in COLMAP_1C.items()}
-            status_raw = clean_text(r.get("Статус"))
-            flags = status_flags(status_raw)
-            vals.update({
-                "key": key, "doc_num": num, "created_at": created,
-                "doc_date": parse_dt(r.get("ДатаДокумента")),
-                "amount": parse_amount(r.get("Сумма")),
-                # статус из 1С (Выдан/Резерв/Удален) -> флаги для cur_status
-                "deleted": flags["deleted"],
-                "posted": flags["posted"],
-                "reserved": flags["reserved"],
-                "status_1c": status_raw,
-                # оплата
-                "payment_amount": parse_amount(r.get("Оплата")),
-                "payment_source": clean_text(r.get("ИсточникОплаты")),
-                "payment_date": parse_date(r.get("ДатаОплаты")),
-                "has_payment": yes(r.get("ЕстьОплата")),
-            })
-            mgr_vals = {}
-            for src, (cl, fn) in COLMAP_MGR.items():
-                if src in df.columns:
-                    mgr_vals[cl] = fn(r.get(src))
+    _finalize_import(con, now)
+    con.close()
+    return stats
 
-            old = existing.get(key)
-            if old is None:
-                row = dict(vals)
-                row.update({k: v for k, v in mgr_vals.items() if v is not None})
-                row.setdefault("check_status", "Новая")
-                row["flag"] = "" if first else "NEW"
-                row["fixed_at"] = now
-                cols = ", ".join(row)
-                cur.execute(f"INSERT INTO deals ({cols}) VALUES ({', '.join(':'+c for c in row)})", row)
-                stats["new"] += 1
+
+def import_csv(csv_path, encoding='utf-8', separator='\t', first=False):
+    """Импорт/обновление сделок из CSV (автовыгрузка 1С). Возвращает статистику.
+
+    Параметры:
+        csv_path:  путь к CSV-файлу
+        encoding:  кодировка файла (utf-8, cp1251, и т.д.)
+        separator: разделитель полей (табуляция, точка с запятой и т.д.)
+        first:     True при первом импорте (не помечает записи как NEW)
+    """
+    import pandas as pd
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"CSV файл не найден: {csv_path}")
+
+    con = db()
+    existing = {
+        r["key"]: dict(r)
+        for r in con.execute(f"SELECT {_EXISTING_COLS} FROM deals")
+    }
+    first = first or not existing
+
+    stats = {"new": 0, "updated": 0, "unchanged": 0, "skipped": 0}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    seen = set()
+    import csv
+    rows = []
+    with open(csv_path, 'r', encoding=encoding) as f:
+        reader = csv.reader(f, delimiter=separator)
+        header = next(reader)
+        header = [str(c).strip() for c in header]
+        h_len = len(header)
+        for i, row in enumerate(reader):
+            if not row:
+                continue
+            if len(row) == h_len:
+                rows.append(row)
+            elif len(row) > h_len:
+                L = len(row) - h_len
+                contacts = separator.join(row[11 : 12 + L])
+                comment = row[12 + L]
+                new_row = row[0:11] + [contacts, comment] + row[-5:]
+                rows.append(new_row)
             else:
-                changes = {}
-                for c in TRACKED_1C + ["territory", "city", "branch", "author", "doc"]:
-                    nv = vals.get(c)
-                    if nv is not None and nv != old.get(c):
-                        changes[c] = nv
-                # менеджерские поля — только если в БД пусто
-                for c, nv in mgr_vals.items():
-                    if nv is not None and (old.get(c) is None or old.get(c) == ""):
-                        changes[c] = nv
-                if changes:
-                    tracked_changed = any(c in TRACKED_1C for c in changes)
-                    if tracked_changed and old.get("flag") != "NEW":
-                        changes["flag"] = "UPDATE"
-                        changes["fixed_at"] = now
-                        for c in changes:
-                            if c in TRACKED_1C:
-                                cur.execute(
-                                    "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) "
-                                    "VALUES (?,?,?,?,?,?)",
-                                    (key, c, str(old.get(c)), str(changes[c]), "1С-импорт", now))
-                    sets = ", ".join(f"{c}=:{c}" for c in changes)
-                    changes["key"] = key
-                    cur.execute(f"UPDATE deals SET {sets} WHERE key=:key", changes)
-                    stats["updated"] += 1
-                else:
-                    stats["unchanged"] += 1
+                continue
+    df = pd.DataFrame(rows, columns=header)
+    _process_import_df(df, con, existing, stats, now, first, seen)
 
-    # автодата закрытия для выданных накладных (статус «Выдан» в 1С).
-    # Логика «Этапа сделки» убрана — этап/статус «Проверки» больше не проставляем.
-    cur.execute("""UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
-                   WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""")
-
-    cur.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,))
-    con.commit()
+    _finalize_import(con, now)
     con.close()
     return stats
 
@@ -590,3 +804,4 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     print("Импорт из:", XLSX_PATH)
     print(import_xlsx())
+

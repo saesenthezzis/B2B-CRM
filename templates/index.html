@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
+
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,6 +20,7 @@
 
   <div class="mode-tabs" id="modes">
     <a class="mode-tab act" data-m="mgr">Сделки</a>
+    <a class="mode-tab" data-m="analytics">Аналитика</a>
     <a class="mode-tab" data-m="boss">Отчет</a>
     <a class="mode-tab" data-m="settings">Настройки</a>
   </div>
@@ -158,6 +161,55 @@
     </div>
   </section>
 
+  <!-- ======== Аналитика (Power BI-style) ======== -->
+  <section id="v-analytics" class="hidden">
+
+    <!-- Top controls -->
+    <div class="analytics-controls">
+      <div class="radio-inputs" id="dashPeriodCtl">
+        <label class="radio"><input type="radio" name="d-per" value="month"><span class="name">Месяц</span></label>
+        <label class="radio"><input type="radio" name="d-per" value="quarter"><span class="name">Квартал</span></label>
+        <label class="radio"><input type="radio" name="d-per" value="year" checked><span class="name">Год</span></label>
+        <label class="radio"><input type="radio" name="d-per" value="all"><span class="name">Всё время</span></label>
+      </div>
+      <div class="radio-inputs" id="dashMetricCtl">
+        <label class="radio"><input type="radio" name="d-met" value="sum" checked><span class="name">Сумма</span></label>
+        <label class="radio"><input type="radio" name="d-met" value="count"><span class="name">Кол-во</span></label>
+        <label class="radio"><input type="radio" name="d-met" value="avg"><span class="name">Ср. чек</span></label>
+      </div>
+    </div>
+
+    <!-- Dashboard body: sidebar + content -->
+    <div class="dash-layout">
+
+      <!-- Sidebar filters -->
+      <aside class="dash-sidebar">
+        <div class="dash-filter">
+          <div class="dash-filter__title">Город</div>
+          <div class="dash-filter__list" id="dashCityList"></div>
+        </div>
+        <div class="dash-filter">
+          <div class="dash-filter__title">Этап сделки</div>
+          <div class="dash-filter__list" id="dashStageList"></div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <div class="dash-main">
+        <div class="kpis" id="dashKpis"></div>
+
+        <div class="card dash-card-trend"><div id="dashTrend" style="height:310px"></div></div>
+
+        <div class="dash-grid3">
+          <div class="card"><h3>Топ клиентов</h3><div id="dashClients" style="height:340px"></div></div>
+          <div class="card"><h3>По городам</h3><div id="dashCityBars" style="height:340px"></div></div>
+          <div class="card"><h3>Динамика по городам</h3><div id="dashCityTrend" style="height:340px"></div></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <!-- ======== Настройки ======== -->
   <section id="v-settings" class="hidden">
     <div class="settings-card">
@@ -194,6 +246,7 @@
 </dialog>
 
 <div id="toast"></div>
+<script src="/static/dashboard.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

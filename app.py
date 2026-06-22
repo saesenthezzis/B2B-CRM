@@ -65,12 +65,11 @@ def meta():
 def deals():
     con = core.db()
     rows = [dict(r) for r in con.execute("SELECT * FROM deals")]
-    counts = {r["deal_key"]: r["c"] for r in con.execute(
-        "SELECT deal_key, COUNT(*) AS c FROM history GROUP BY deal_key")}
+    user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
     con.close()
     out = []
     for d in rows:
-        d.update(core.derive(d, hist_count=counts.get(d["key"], 0)))
+        d.update(core.derive(d, user_action_keys=user_action_keys))
         out.append(d)
     return jsonify(out)
 
@@ -93,7 +92,7 @@ def patch_deal(key):
     changes = {}
     for f, v in fields.items():
         v = v if v not in ("", None) else None
-        if f in ("in_stock", "closing_docs") and v is not None:
+        if f == "closing_docs" and v is not None:
             v = 1 if v in (1, True, "1", "true", "Да") else 0
         if v != old.get(f):
             changes[f] = v
@@ -115,9 +114,9 @@ def patch_deal(key):
         con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
         con.commit()
     fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
-    hc = con.execute("SELECT COUNT(*) AS c FROM history WHERE deal_key=?", (key,)).fetchone()["c"]
+    has_action = con.execute("SELECT 1 FROM history WHERE deal_key=? AND user != '1С-импорт' LIMIT 1", (key,)).fetchone() is not None
     con.close()
-    fresh.update(core.derive(fresh, hist_count=hc))
+    fresh.update(core.derive(fresh, user_action_keys={key} if has_action else set()))
     return jsonify(fresh)
 
 
@@ -300,6 +299,98 @@ def auth_change_password():
 def auth_logout():
     session.clear()
     return jsonify({"success": True})
+
+
+@app.get("/api/dashboard/data")
+@login_required
+def dashboard_data():
+    import pandas as pd
+    view = request.args.get("view", "trend")
+    period = request.args.get("period", "month")
+    group_by = request.args.get("groupBy", "city")
+
+    con = core.db()
+    rows = [dict(r) for r in con.execute(
+        "SELECT doc_date, created_at, amount, client, city, author, stage, "
+        "deleted, posted, reserved FROM deals"
+    )]
+    con.close()
+
+    if not rows:
+        return jsonify({"labels": [], "values": [], "series": []})
+
+    df = pd.DataFrame(rows)
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+    df["date"] = pd.to_datetime(
+        df["doc_date"].fillna(df["created_at"]), errors="coerce"
+    )
+    df = df.dropna(subset=["date"])
+
+    # period filter
+    now = pd.Timestamp.now()
+    if period == "week":
+        df = df[df["date"] >= now - pd.Timedelta(days=7)]
+    elif period == "month":
+        df = df[df["date"] >= now - pd.Timedelta(days=30)]
+    elif period == "quarter":
+        df = df[df["date"] >= now - pd.Timedelta(days=90)]
+    elif period == "year":
+        df = df[df["date"] >= now - pd.Timedelta(days=365)]
+
+    if df.empty:
+        return jsonify({"labels": [], "values": [], "series": []})
+
+    if view == "trend":
+        # candlestick-style OHLC by day
+        df = df.set_index("date").sort_index()
+        freq = "D" if period == "week" else "W" if period in ("month", "quarter") else "ME"
+        ohlc = df["amount"].resample(freq).agg(
+            open="first", high="max", low="min", close="last"
+        ).dropna()
+        series = []
+        for ts, row in ohlc.iterrows():
+            series.append({
+                "time": ts.strftime("%Y-%m-%d"),
+                "open": round(row["open"], 2),
+                "high": round(row["high"], 2),
+                "low": round(row["low"], 2),
+                "close": round(row["close"], 2),
+            })
+        return jsonify({"series": series})
+
+    elif view == "structure":
+        col_map = {"city": "city", "author": "author", "stage": "stage"}
+        col = col_map.get(group_by, "city")
+        grp = df.groupby(df[col].fillna("(не указано)"))["amount"].sum()
+        grp = grp.sort_values(ascending=False).head(12)
+        return jsonify({
+            "labels": grp.index.tolist(),
+            "values": [round(v, 2) for v in grp.values.tolist()],
+        })
+
+    elif view == "rating":
+        grp = df.groupby(df["client"].fillna("(не указано)"))["amount"].sum()
+        grp = grp.sort_values(ascending=False).head(10)
+        return jsonify({
+            "labels": grp.index.tolist(),
+            "values": [round(v, 2) for v in grp.values.tolist()],
+        })
+
+    elif view == "plan":
+        # cumulative daily sum for current month
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        mdf = df[df["date"] >= month_start].copy()
+        if mdf.empty:
+            return jsonify({"series": []})
+        daily = mdf.set_index("date").resample("D")["amount"].sum().fillna(0)
+        cumulative = daily.cumsum()
+        series = [
+            {"x": ts.strftime("%Y-%m-%d"), "y": round(v, 2)}
+            for ts, v in cumulative.items()
+        ]
+        return jsonify({"series": series})
+
+    return jsonify({"error": "unknown view"}), 400
 
 
 if __name__ == "__main__":

@@ -13,3 +13,13 @@ knowledge/contracts/*
 reports/html/*
 !reports/html/.gitkeep
 /memory/*
+/Рабочее_место_Корпоративного_отдела.xlsx
+/sync.log
+/.sync_state.json
+/test.db
+/test2.db
+__pycache__/
+*.csv
+test_*.py
+.vscode/
+/trash
