@@ -14,7 +14,7 @@
 import os
 import re
 import sqlite3
-import libsql_client
+import libsql as libsql_exp
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
@@ -24,11 +24,17 @@ class _DummyCursor:
     def __init__(self, rs):
         self.rs = rs
         self._rows = []
-        if rs and hasattr(rs, 'rows'):
-            columns = rs.columns
-            for row in rs.rows:
-                d = {columns[i]: row[i] for i in range(len(columns))}
-                self._rows.append(d)
+        if rs:
+            if hasattr(rs, 'rows') and hasattr(rs, 'columns'):
+                columns = rs.columns
+                for row in rs.rows:
+                    d = {columns[i]: row[i] for i in range(len(columns))}
+                    self._rows.append(d)
+            elif hasattr(rs, 'description') and rs.description:
+                columns = [col[0] for col in rs.description]
+                for row in rs.fetchall():
+                    d = {columns[i]: row[i] for i in range(len(columns))}
+                    self._rows.append(d)
         self._idx = 0
 
     def fetchone(self):
@@ -53,7 +59,10 @@ class _DbWrapper:
             self.con.row_factory = sqlite3.Row
             self.is_sqlite = True
         else:
-            self.client = libsql_client.create_client_sync(url, auth_token=auth_token)
+            self.client = libsql_exp.connect(
+                database=url,
+                auth_token=auth_token,
+            )
             self.is_sqlite = False
     
     def cursor(self):
@@ -67,20 +76,18 @@ class _DbWrapper:
                 return self.con.execute(sql, params)
             return self.con.execute(sql)
         else:
-            args = params if params is not None else []
-            rs = self.client.execute(sql, args)
-            return _DummyCursor(rs)
+            args = list(params) if params is not None else []
+            result = self.client.execute(sql, args)
+            return _DummyCursor(result)
 
     def executescript(self, sql_script):
         if self.is_sqlite:
             self.con.executescript(sql_script)
         else:
-            statements = [s.strip() for s in sql_script.split(";") if s.strip()]
-            if statements:
-                self.client.batch(statements)
+            self.client.executescript(sql_script)
     
     def execute_batch(self, statements_list):
-        """Executes a list of (sql, params) tuples in batches to minimize HTTP roundtrips."""
+        """Отправляет список (sql, params) батчами по 500 — минимум HTTP round-trips."""
         if not statements_list:
             return
         if self.is_sqlite:
@@ -91,17 +98,30 @@ class _DbWrapper:
                     self.con.execute(sql)
             self.con.commit()
         else:
-            import libsql_client as lc
-            libsql_statements = []
-            for sql, params in statements_list:
-                stmt = lc.Statement(sql, params)
-                libsql_statements.append(stmt)
-            
-            # Execute in batches of 500 to avoid payload size limits
             batch_size = 500
-            for i in range(0, len(libsql_statements), batch_size):
-                chunk = libsql_statements[i : i + batch_size]
-                self.client.batch(chunk)
+            for i in range(0, len(statements_list), batch_size):
+                chunk = statements_list[i : i + batch_size]
+                parts = []
+                for sql, params in chunk:
+                    if params is None:
+                        parts.append(sql)
+                    elif isinstance(params, dict):
+                        s = sql
+                        # Сортируем ключи по длине в порядке убывания, чтобы предотвратить замену подстрок (например, :doc внутри :doc_num)
+                        for k in sorted(params.keys(), key=len, reverse=True):
+                            v = params[k]
+                            escaped = "NULL" if v is None else "'{}'".format(
+                                str(v).replace("'", "''"))
+                            s = s.replace(f":{k}", escaped)
+                        parts.append(s)
+                    else:
+                        s = sql
+                        for v in params:
+                            escaped = "NULL" if v is None else "'{}'".format(
+                                str(v).replace("'", "''"))
+                            s = s.replace("?", escaped, 1)
+                        parts.append(s)
+                self.client.executescript(";\n".join(parts))
     
     def commit(self):
         if self.is_sqlite:
@@ -214,12 +234,18 @@ def _run_migrations(con):
         pass
 
 
+_schema_applied = False
+
+
 def db():
+    global _schema_applied
     url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
     auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
     con = _DbWrapper(url, auth_token)
-    con.executescript(SCHEMA)
-    _run_migrations(con)
+    if not _schema_applied:
+        con.executescript(SCHEMA)
+        _run_migrations(con)
+        _schema_applied = True
     return con
 
 
@@ -528,6 +554,31 @@ TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c", "deleted", "posted
               "reserved", "client", "status_1c", "payment_amount", "has_payment",
               "payment_source", "payment_date", "invoice_basis"]
 
+# Колонки, загружаемые при старте импорта — только те, что нужны в _process_import_df
+_EXISTING_COLS = (
+    "key, territory, city, branch, author, doc, amount, doc_date, "
+    "contacts, comment_1c, deleted, posted, reserved, client, status_1c, "
+    "payment_amount, payment_source, payment_date, has_payment, "
+    "invoice_basis, stage, last_contact, close_date, reject_reason, "
+    "delete_reason, notes, in_stock, closing_docs, delivery, "
+    "contract_num, lead_source, flag"
+)
+
+
+def _normalize(v):
+    """Нормализация значения для сравнения: убирает различия в типах (float vs str и т.д.)."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if s in ("", "None", "nan", "NaT", "none", "nat"):
+        return None
+    try:
+        f = float(s)
+        # Если число целое — сравниваем как int, чтобы "1500.0" == 1500
+        return int(f) if f == int(f) else f
+    except (ValueError, OverflowError):
+        return s
+
 
 def _sheet_rows(xlsx_path, sheet):
     import pandas as pd
@@ -600,19 +651,12 @@ def _process_import_df(df, con, existing, stats, now, first, seen):
         else:
             changes = {}
             for c in TRACKED_1C + ["territory", "city", "branch", "author", "doc"]:
-                nv = vals.get(c)
-                # Type conversion for comparison
-                ov = old.get(c)
-                if nv is not None:
-                    if isinstance(ov, float) or isinstance(ov, int):
-                        try:
-                            nv_num = float(nv) if isinstance(nv, str) else nv
-                            if nv_num == ov:
-                                continue
-                        except ValueError:
-                            pass
-                    if nv != ov:
-                        changes[c] = nv
+                raw_nv = vals.get(c)
+                raw_ov = old.get(c)
+                # Нормализуем перед сравнением — устраняет ложные UPDATE из-за типов
+                if _normalize(raw_nv) != _normalize(raw_ov):
+                    if raw_nv is not None:
+                        changes[c] = raw_nv
             # менеджерские поля — только если в БД пусто
             for c, nv in mgr_vals.items():
                 if nv is not None and (old.get(c) is None or old.get(c) == ""):
@@ -639,18 +683,30 @@ def _process_import_df(df, con, existing, stats, now, first, seen):
 
 
 def _finalize_import(con, now):
-    """Автозаполнение для выданных накладных + обновление meta."""
-    # этап «Закрыто», ✔товар в наличии, проверка «Закрыто автоматически»,
-    # след. шаг — если был пуст, автодата закрытия (логика «Что нового» 19.03)
-    con.execute("""UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
-                   WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""")
-    con.execute("""UPDATE deals SET next_step='Закрыто автоматически'
-                   WHERE (next_step IS NULL OR next_step='')
-                     AND posted=1 AND reserved=0 AND deleted=0""")
-    con.execute("""UPDATE deals SET stage='Закрыто', in_stock=1,
-                          check_status='Закрыто автоматически'
-                   WHERE posted=1 AND reserved=0 AND deleted=0""")
-    con.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,))
+    """Автозаполнение для выданных накладных + обновление meta.
+    
+    Все 4 запроса отправляются одним батчем — один HTTP round-trip вместо четырёх.
+    """
+    con.execute_batch([
+        (
+            """UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
+               WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        (
+            """UPDATE deals SET next_step='Закрыто автоматически'
+               WHERE (next_step IS NULL OR next_step='')
+                 AND posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        (
+            """UPDATE deals SET stage='Закрыто', in_stock=1,
+                      check_status='Закрыто автоматически'
+               WHERE posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        ("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,)),
+    ])
     con.commit()
 
 
@@ -662,7 +718,10 @@ def import_xlsx(xlsx_path=None, first=False):
         raise FileNotFoundError("Файл выгрузки из 1С не найден. Пожалуйста, запустите 'Обновить данные из 1С.bat' локально на вашем компьютере.")
 
     con = db()
-    existing = {r["key"]: dict(r) for r in con.execute("SELECT * FROM deals")}
+    existing = {
+        r["key"]: dict(r)
+        for r in con.execute(f"SELECT {_EXISTING_COLS} FROM deals")
+    }
     first = first or not existing
 
     stats = {"new": 0, "updated": 0, "unchanged": 0, "skipped": 0}
@@ -703,7 +762,10 @@ def import_csv(csv_path, encoding='utf-8', separator='\t', first=False):
         raise FileNotFoundError(f"CSV файл не найден: {csv_path}")
 
     con = db()
-    existing = {r["key"]: dict(r) for r in con.execute("SELECT * FROM deals")}
+    existing = {
+        r["key"]: dict(r)
+        for r in con.execute(f"SELECT {_EXISTING_COLS} FROM deals")
+    }
     first = first or not existing
 
     stats = {"new": 0, "updated": 0, "unchanged": 0, "skipped": 0}
