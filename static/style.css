@@ -449,8 +449,8 @@ tr:hover td { background: transparent !important; }
   font-weight: 700;
 }
 .payment-badge {
-  display: inline-block;
-  margin-top: 3px;
+  display: block;
+  margin-bottom: 2px;
   padding: 1px 7px;
   border-radius: var(--radius-pill);
   color: var(--c-ready);

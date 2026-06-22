@@ -512,7 +512,7 @@ def derive(d, today=None, user_action_keys=None):
     elif st == "Выдан" or (stage == "Закрыто" and in_stock_ok):
         hint, level = "Товар выдан", "done"
     elif st == "Резерв" and paid and in_stock_ok:
-        hint, level = "Согласовать выдачу", "ready"
+        hint, level = "Выдать товар", "ready"
     elif st == "Резерв" and paid:
         hint, level = "Сообщить срок", "paid"
     elif st == "Резерв" and wd >= 3:
@@ -520,7 +520,7 @@ def derive(d, today=None, user_action_keys=None):
     elif st == "Резерв":
         hint, level = "Довести до оплаты", "warn"
     elif stage == "Оплата есть" and in_stock_ok:
-        hint, level = "Согласовать выдачу", "ready"
+        hint, level = "Выдать товар", "ready"
     elif stage == "Оплата есть":
         hint, level = "Сообщить срок", "paid"
     elif stage == "Счет отправлен" and wd >= 3:
@@ -532,9 +532,9 @@ def derive(d, today=None, user_action_keys=None):
     else:
         hint, level = "Связаться с клиентом", "info"
 
-    # Сверяем overdue по plan_contact
+    # Сверяем overdue по plan_contact (не для оплаченных заказов)
     overdue = bool(plan_contact and plan_contact[:10] < today.strftime("%Y-%m-%d")
-                   and level not in ("done", "closed"))
+                   and level not in ("done", "closed") and not paid)
     closed = level in ("done", "closed") and not errors
     return {
         "cur_status": st, "hint": hint, "level": level, "errors": errors,

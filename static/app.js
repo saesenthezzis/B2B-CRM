@@ -103,9 +103,22 @@ function applyManagerZone(save = true) {
 
 /* ---------- очереди ---------- */
 const QUEUES = [
-  { id: 'new', name: 'Новые', f: d => d.flag === 'NEW' || d.level === 'new' },
-  { id: 'action', name: 'Сделать сегодня', f: d => ['risk', 'warn', 'ready', 'paid', 'error'].includes(d.level) || d.overdue_contact },
-  { id: 'done', name: 'Закрытые', f: d => d.is_closed && d.level === 'done' },
+  { id: 'new', name: 'Новые', f: d => d.check_status === 'Новая' },
+  { id: 'action', name: 'Требует действия', f: d => {
+    const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
+    const isIssued = d.cur_status === 'Выдан';
+    // Неоплаченные документы со статусом "Резерв"
+    if (d.cur_status === 'Резерв' && !paid) return true;
+    // Удаленные без причины
+    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && !d.delete_reason) return true;
+    // Оплаченные документы и не выданные, со статусом "Резерв"
+    if (d.cur_status === 'Резерв' && paid && !isIssued) return true;
+    return false;
+  }},
+  { id: 'done', name: 'Закрытые', f: d => {
+    const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
+    return d.is_closed && d.level === 'done' && paid;
+  } },
   { id: 'lost', name: 'Без продажи', f: d => d.is_closed && d.level !== 'done' },
   { id: 'all', name: 'Все', f: () => true },
 ];
@@ -171,13 +184,13 @@ function renderQueues(rows) {
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
-  { id: 'hint', name: 'Действие' },
-  { id: 'doc_num', name: 'Документ' },
   { id: 'doc_date', name: 'Дата' },
-  { id: 'city', name: 'Город' },
+  { id: 'city', name: 'Филиал' },
+  { id: 'doc_num', name: 'Документ' },
   { id: 'client', name: 'Клиент' },
-  { id: 'amount', name: 'Сумма' },
+  { id: 'hint', name: 'Действие' },
   { id: 'stage', name: 'Этап' },
+  { id: 'amount', name: 'Сумма' },
   { id: 'in_stock', name: 'Товар' },
   { id: 'plan_contact', name: 'Срок' },
   { id: 'reason', name: 'Причина' },
@@ -238,13 +251,13 @@ function rowHtml(d) {
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
   const actionMark = d.overdue_contact ? '<span class="late-mark" title="Срок прошел">Просрочено</span>' : '';
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
-    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span>${actionMark}</td>
-    <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td>${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
     <td>${esc(d.city || '')}</td>
+    <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
-    <td class="sum">${money(d.amount)}${paymentBadge(d)}</td>
+    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span>${actionMark}</td>
     <td>${stageCell(d)}</td>
+    <td class="sum">${paymentBadge(d)}<span class="amount-text">${money(d.amount)}</span></td>
     <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено", "Товар есть"], false)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
     <td>${reason}</td>
