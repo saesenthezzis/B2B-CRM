@@ -6,3 +6,13 @@
 /Gemini_Generated_Image_vmwuzuvmwuzuvmwu (1).png
 /design.md
 /Рабочее_место_Корпоративного_отдела.xlsx
+/sync.log
+/.sync_state.json
+/test.db
+/test2.db
+__pycache__/
+*.db
+*.csv
+test_*.py
+.vscode/
+/trash

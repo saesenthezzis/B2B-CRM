@@ -65,10 +65,11 @@ def meta():
 def deals():
     con = core.db()
     rows = [dict(r) for r in con.execute("SELECT * FROM deals")]
+    user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
     con.close()
     out = []
     for d in rows:
-        d.update(core.derive(d))
+        d.update(core.derive(d, user_action_keys=user_action_keys))
         out.append(d)
     return jsonify(out)
 
@@ -91,7 +92,7 @@ def patch_deal(key):
     changes = {}
     for f, v in fields.items():
         v = v if v not in ("", None) else None
-        if f in ("in_stock", "closing_docs") and v is not None:
+        if f == "closing_docs" and v is not None:
             v = 1 if v in (1, True, "1", "true", "Да") else 0
         if v != old.get(f):
             changes[f] = v
@@ -113,8 +114,9 @@ def patch_deal(key):
         con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
         con.commit()
     fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
+    has_action = con.execute("SELECT 1 FROM history WHERE deal_key=? AND user != '1С-импорт' LIMIT 1", (key,)).fetchone() is not None
     con.close()
-    fresh.update(core.derive(fresh))
+    fresh.update(core.derive(fresh, user_action_keys={key} if has_action else set()))
     return jsonify(fresh)
 
 

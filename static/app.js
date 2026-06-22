@@ -178,9 +178,8 @@ const COLS = [
   { id: 'client', name: 'Контрагент' },
   { id: 'amount', name: 'Сумма' },
   { id: 'stage', name: 'Этап сделки' },
-  { id: 'in_stock', name: 'Товар' },
-  { id: 'next_step', name: 'След. шаг' },
-  { id: 'plan_contact', name: 'План конт.' },
+  { id: 'in_stock', name: 'Проверка товара' },
+  { id: 'plan_contact', name: 'Связаться с клиентом' },
   { id: 'reason', name: 'Причина' },
   { id: 'check_status', name: 'Проверка' },
   { id: 'notes', name: 'Примечания' },
@@ -203,7 +202,8 @@ function rowHtml(d) {
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
   const wa = (d.phones || []).map(p => `<a class="wa" target="_blank" href="https://wa.me/${p}" title="WhatsApp">💬 ${p.slice(-4)}</a>`).join('');
   const dateStr = d.doc_date ? d.doc_date.slice(0, 10).split('-').reverse().join('.') : '';
-  const planVal = d.plan_contact ? d.plan_contact.slice(0, 10) : '';
+  const planVal = d.plan_contact ? d.plan_contact.slice(0, 10).split('-').reverse().join('.') : '';
+  const planColorClass = d.plan_color === 'green' ? 'plan-green' : d.plan_color === 'yellow' ? 'plan-yellow' : 'plan-red';
   const reason = d.stage === 'Не состоялась'
     ? selectHtml(d, 'reject_reason', META.reject_reasons)
     : (d.stage === 'Удалён' || d.cur_status === 'Удалён')
@@ -219,11 +219,10 @@ function rowHtml(d) {
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td class="sum">${money(d.amount)}</td>
     <td>${selectHtml(d, 'stage', META.stages)}</td>
-    <td style="text-align:center"><label class="aether-check"><input type="checkbox" data-k="${esc(d.key)}" data-f="in_stock" ${d.in_stock ? 'checked' : ''}><span class="aether-check__box"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></label></td>
-    <td>${selectHtml(d, 'next_step', META.next_steps)}</td>
-    <td><input type="date" data-k="${esc(d.key)}" data-f="plan_contact" value="${planVal}" class="${d.overdue_contact ? 'late' : ''}"></td>
+    <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено", "Товар есть"], false)}</td>
+    <td><span class="${planColorClass}">${planVal}</span></td>
     <td>${reason}</td>
-    <td class="td-narrow">${selectHtml(d, 'check_status', META.check_statuses, false)}</td>
+    <td>${esc(d.check_status || 'Новая')}</td>
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="..."></td>
     <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
@@ -255,7 +254,7 @@ function render() {
   if (page >= pages) page = pages - 1;
   const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
   $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="17" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
+    pg.map(rowHtml).join('') || '<tr><td colspan="16" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
   bindRowEvents();
   $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
   $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
@@ -558,7 +557,7 @@ $('btnImport').onclick = async () => {
   const b = $('btnImport');
   b.disabled = true; b.textContent = '⏳ Импорт...';
   // Покажем лоадер в таблице
-  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="17" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="16" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
   try {
     const r = await fetch('/api/import', { method: 'POST' });
     if (r.status === 401) return location.href = '/login';
