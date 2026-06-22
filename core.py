@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS deals (
     has_payment INTEGER DEFAULT 0, invoice_basis TEXT,
     stage TEXT, next_step TEXT, plan_contact TEXT, last_contact TEXT,
     close_date TEXT, reject_reason TEXT, delete_reason TEXT, notes TEXT,
-    check_status TEXT, in_stock INTEGER, closing_docs INTEGER, delivery TEXT,
+    check_status TEXT, in_stock TEXT DEFAULT 'Ожидает проверки', closing_docs INTEGER, delivery TEXT,
     contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
     flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
     updated_at TEXT, updated_by TEXT
@@ -224,6 +224,16 @@ _MIGRATIONS = [
     "ALTER TABLE deals ADD COLUMN invoice_basis TEXT",
 ]
 
+# Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
+_MIGRATE_IN_STOCK = """
+UPDATE deals SET in_stock = CASE
+    WHEN in_stock = 1 OR in_stock = '1' THEN 'Проверено'
+    WHEN in_stock = 0 OR in_stock = '0' THEN 'Ожидает проверки'
+    WHEN in_stock IS NULL OR in_stock = '' THEN 'Ожидает проверки'
+    ELSE in_stock
+END
+"""
+
 
 def _run_migrations(con):
     """Добавить новые колонки в существующую таблицу deals (игнорирует дубли)."""
@@ -232,6 +242,11 @@ def _run_migrations(con):
             con.execute(sql)
         except Exception:
             pass  # колонка уже существует
+    # Конвертация in_stock: INTEGER 0/1 → TEXT
+    try:
+        con.execute(_MIGRATE_IN_STOCK)
+    except Exception:
+        pass
     try:
         con.commit()
     except Exception:
@@ -704,7 +719,7 @@ def _finalize_import(con, now):
             None,
         ),
         (
-            """UPDATE deals SET stage='Закрыто', in_stock=1,
+            """UPDATE deals SET stage='Закрыто', in_stock='Товар есть',
                       check_status='Закрыто автоматически'
                WHERE posted=1 AND reserved=0 AND deleted=0""",
             None,
@@ -752,13 +767,13 @@ def import_xlsx(xlsx_path=None, first=False):
     return stats
 
 
-def import_csv(csv_path, encoding='utf-8', separator='\t', first=False):
+def import_csv(csv_path, encoding='utf-8', separator=';', first=False):
     """Импорт/обновление сделок из CSV (автовыгрузка 1С). Возвращает статистику.
 
     Параметры:
         csv_path:  путь к CSV-файлу
         encoding:  кодировка файла (utf-8, cp1251, и т.д.)
-        separator: разделитель полей (табуляция, точка с запятой и т.д.)
+        separator: разделитель полей (точка с запятой по умолчанию)
         first:     True при первом импорте (не помечает записи как NEW)
     """
     import pandas as pd
@@ -780,7 +795,8 @@ def import_csv(csv_path, encoding='utf-8', separator='\t', first=False):
     with open(csv_path, 'r', encoding=encoding) as f:
         reader = csv.reader(f, delimiter=separator)
         header = next(reader)
-        header = [str(c).strip() for c in header]
+        # Убираем BOM из первой колонки
+        header = [str(c).strip().lstrip('\ufeff') for c in header]
         h_len = len(header)
         for i, row in enumerate(reader):
             if not row:

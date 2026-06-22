@@ -27,9 +27,9 @@ NETWORK_PATH = os.getenv(
 )
 FILE_NAME = os.getenv("SYNC_FILE_NAME", "РМКО_выгрузка.csv")
 CSV_ENCODING = os.getenv("SYNC_CSV_ENCODING", "utf-8")
-_raw_sep = os.getenv("SYNC_CSV_SEPARATOR", "\\t")
+_raw_sep = os.getenv("SYNC_CSV_SEPARATOR", ";")
 # Интерпретация escape-последовательностей: "\t" → табуляция, "\n" → перенос строки
-CSV_SEPARATOR = _raw_sep.encode().decode("unicode_escape") if _raw_sep else "\t"
+CSV_SEPARATOR = _raw_sep.encode().decode("unicode_escape") if _raw_sep else ";"
 
 # Файл для отслеживания последней синхронизации
 STATE_FILE = os.path.join(BASE_DIR, ".sync_state.json")
