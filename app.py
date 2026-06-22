@@ -54,7 +54,7 @@ def meta():
         "specialists": core.load_specialists(),
         "stages": core.STAGES, "next_steps": core.NEXT_STEPS,
         "reject_reasons": core.REJECT_REASONS, "delete_reasons": core.DELETE_REASONS,
-        "check_statuses": core.CHECK_STATUSES,
+        "check_statuses": core.CHECK_STATUSES, "goods_check": core.GOODS_CHECK,
         "last_import": li["v"] if li else None,
         "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
     })
@@ -65,10 +65,12 @@ def meta():
 def deals():
     con = core.db()
     rows = [dict(r) for r in con.execute("SELECT * FROM deals")]
+    counts = {r["deal_key"]: r["c"] for r in con.execute(
+        "SELECT deal_key, COUNT(*) AS c FROM history GROUP BY deal_key")}
     con.close()
     out = []
     for d in rows:
-        d.update(core.derive(d))
+        d.update(core.derive(d, hist_count=counts.get(d["key"], 0)))
         out.append(d)
     return jsonify(out)
 
@@ -113,8 +115,9 @@ def patch_deal(key):
         con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
         con.commit()
     fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
+    hc = con.execute("SELECT COUNT(*) AS c FROM history WHERE deal_key=?", (key,)).fetchone()["c"]
     con.close()
-    fresh.update(core.derive(fresh))
+    fresh.update(core.derive(fresh, hist_count=hc))
     return jsonify(fresh)
 
 

@@ -65,7 +65,6 @@
     <div class="filters-row">
       <select class="aether-select" id="fPeriod">
         <option value="">Период: все</option>
-        <option value="today">Сегодня</option>
         <option value="day">День</option>
         <option value="week">Неделя</option>
         <option value="month">Месяц</option>
@@ -85,8 +84,12 @@
         <option value="Удален">Удален</option>
       </select>
 
-      <select class="aether-select" id="fStage">
-        <option value="">Этап: все</option>
+      <select class="aether-select" id="fCheck">
+        <option value="">Проверка: все</option>
+        <option value="Новая">Новая</option>
+        <option value="В работе">В работе</option>
+        <option value="Закрыто">Закрыто</option>
+        <option value="Закрыто автоматически">Закрыто автоматически</option>
       </select>
 
       <label class="filter-toggle">
@@ -116,7 +119,7 @@
     <table id="tbl" class="main-table">
       <thead></thead>
       <tbody>
-        <tr><td colspan="16" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>
+        <tr><td colspan="13" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>
       </tbody>
     </table>
 

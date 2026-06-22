@@ -363,8 +363,30 @@ td {
 .td-narrow select { max-width: 100px; font-size: 11px; }
 
 /* Fixed tight columns */
-th:nth-child(9), td:nth-child(9) { width: 40px; text-align: center; padding-left: 0; padding-right: 0; } /* Товар checkbox */
 th:last-child, td:last-child { width: 34px; text-align: center; padding-left: 0; padding-right: 0; } /* История icon */
+
+/* «Связаться с клиентом» — авто-дата (контакт = дата сделки + 2 дня) */
+td.contact-cell {
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 6px);
+}
+td.contact-green  { color: var(--c-done); background: rgba(22,163,74,0.10) !important; }
+td.contact-yellow { color: var(--c-warn); background: rgba(217,119,6,0.12) !important; }
+td.contact-red    { color: var(--c-risk); background: rgba(220,38,38,0.10) !important; }
+
+/* Статус оплаты (плашка под контрагентом, рядом с телефоном) */
+.cl-line { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pay-yes { color: var(--c-done); background: rgba(22,163,74,0.10); border: 1px solid rgba(22,163,74,0.22); }
+.pay-no  { color: var(--color-ink-tertiary, #8a8f98); background: rgba(120,120,120,0.10); border: 1px solid rgba(120,120,120,0.22); }
+
+/* «Проверка» — автоматический статус (нередактируемый) */
+.chk-new  { color: var(--color-accent); background: rgba(0,122,255,0.08); border: 1px solid rgba(0,122,255,0.2); }
+.chk-work { color: var(--c-warn); background: rgba(217,119,6,0.10); border: 1px solid rgba(217,119,6,0.22); }
+.chk-done { color: var(--c-done); background: rgba(22,163,74,0.08); border: 1px solid rgba(22,163,74,0.2); }
+.chk-auto { color: var(--c-paid); background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.2); }
 
 td.sum {
   text-align: right;

@@ -5,3 +5,11 @@
 /.cursorrules
 /Gemini_Generated_Image_vmwuzuvmwuzuvmwu (1).png
 /design.md
+# AI Экосистема безопасности
+.env
+*.db
+knowledge/contracts/*
+!knowledge/contracts/.gitkeep
+reports/html/*
+!reports/html/.gitkeep
+/memory/*

@@ -40,7 +40,6 @@ async function loadAll() {
     });
     fillUserSelect();
     fillCitySelect();
-    fillSelect($('fStage'), m.stages.concat(['(пусто)']));
     applyManagerZone(false);
     render();
   } catch (e) {
@@ -132,7 +131,7 @@ function periodRange() {
 }
 
 function baseFiltered() {
-  const city = $('myCity').value, stage = $('fStage').value, status = $('fStatus').value;
+  const city = $('myCity').value, check = $('fCheck').value, status = $('fStatus').value;
   const q = $('q').value.toLowerCase(), mine = $('fMine').checked;
   const me = ($('user').value || '').toLowerCase();
   const zoneCities = SPEC[$('user').value] || [];
@@ -140,7 +139,7 @@ function baseFiltered() {
   return DATA.filter(d => {
     if (city === ZONE) { if (!zoneCities.includes(d.city)) return false; }
     else if (city && d.city !== city) return false;
-    if (stage && (stage === '(пусто)' ? d.stage : d.stage !== stage)) return false;
+    if (check && d.check_status !== check) return false;
     if (status && d.cur_status !== status) return false;
     if (mine && me && !(d.author || '').toLowerCase().includes(me)) return false;
     if (range) {
@@ -170,21 +169,17 @@ function renderQueues(rows) {
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
-  { id: 'status', name: 'Статус' },
-  { id: 'hint', name: 'Подсказка' },
-  { id: 'doc_num', name: '№' },
   { id: 'doc_date', name: 'Дата' },
-  { id: 'city', name: 'Город' },
+  { id: 'branch', name: 'Филиал' },
+  { id: 'doc_num', name: '№' },
+  { id: 'hint', name: 'Подсказка' },
   { id: 'client', name: 'Контрагент' },
   { id: 'amount', name: 'Сумма' },
-  { id: 'stage', name: 'Этап сделки' },
-  { id: 'in_stock', name: 'Товар' },
-  { id: 'next_step', name: 'След. шаг' },
-  { id: 'plan_contact', name: 'План конт.' },
+  { id: 'goods_check', name: 'Проверка товара' },
+  { id: 'contact_date', name: 'Связаться с клиентом' },
   { id: 'reason', name: 'Причина' },
   { id: 'check_status', name: 'Проверка' },
   { id: 'notes', name: 'Примечания' },
-  { id: 'author', name: 'Автор' },
   { id: 'hist', name: '' },
   { id: '_confirm', name: '' },
 ];
@@ -198,34 +193,37 @@ function selectHtml(d, field, options, allowEmpty = true) {
   </select>`;
 }
 
+const CHK_CLASS = {
+  'Новая': 'new', 'В работе': 'work',
+  'Закрыто': 'done', 'Закрыто автоматически': 'auto',
+};
+const chkClass = s => CHK_CLASS[s] || 'new';
+
 function rowHtml(d) {
   const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
   const wa = (d.phones || []).map(p => `<a class="wa" target="_blank" href="https://wa.me/${p}" title="WhatsApp">💬 ${p.slice(-4)}</a>`).join('');
   const dateStr = d.doc_date ? d.doc_date.slice(0, 10).split('-').reverse().join('.') : '';
-  const planVal = d.plan_contact ? d.plan_contact.slice(0, 10) : '';
-  const reason = d.stage === 'Не состоялась'
-    ? selectHtml(d, 'reject_reason', META.reject_reasons)
-    : (d.stage === 'Удалён' || d.cur_status === 'Удалён')
-      ? selectHtml(d, 'delete_reason', META.delete_reasons)
-      : '<span class="cl">—</span>';
+  const contactStr = d.contact_date ? d.contact_date.slice(0, 10).split('-').reverse().join('.') : '';
+  const payBadge = d.has_payment
+    ? '<span class="badge pay-yes">Оплачено</span>'
+    : '<span class="badge pay-no">Не оплачено</span>';
+  const reason = d.cur_status === 'Удален'
+    ? selectHtml(d, 'delete_reason', META.delete_reasons)
+    : '<span class="cl">—</span>';
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
-    <td><span class="badge ${stClass}">${esc(d.cur_status)}</span>${flag}</td>
-    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}${d.overdue_contact ? ' · ⚠️' : ''}</span></td>
-    <td class="td-copy" title="${esc(d.doc)}"><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td>${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
-    <td>${esc(d.city || '')}</td>
-    <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
+    <td>${esc(d.branch || '')}</td>
+    <td class="td-copy" title="${esc(d.doc)}"><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
+    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}${d.overdue_contact ? ' · ⚠️' : ''}</span></td>
+    <td><b>${esc(d.client || '')}</b><br><span class="cl-line">${wa}${payBadge}</span><span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td class="sum">${money(d.amount)}</td>
-    <td>${selectHtml(d, 'stage', META.stages)}</td>
-    <td style="text-align:center"><label class="aether-check"><input type="checkbox" data-k="${esc(d.key)}" data-f="in_stock" ${d.in_stock ? 'checked' : ''}><span class="aether-check__box"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></label></td>
-    <td>${selectHtml(d, 'next_step', META.next_steps)}</td>
-    <td><input type="date" data-k="${esc(d.key)}" data-f="plan_contact" value="${planVal}" class="${d.overdue_contact ? 'late' : ''}"></td>
+    <td>${selectHtml(d, 'goods_check', META.goods_check, false)}</td>
+    <td class="contact-cell contact-${d.contact_color || ''}">${contactStr}</td>
     <td>${reason}</td>
-    <td class="td-narrow">${selectHtml(d, 'check_status', META.check_statuses, false)}</td>
+    <td><span class="badge chk-${chkClass(d.check_status)}">${esc(d.check_status || '')}</span></td>
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="..."></td>
-    <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
     <td class="td-confirm">${PENDING[d.key] ? `<div class="row-confirm-actions"><button class="row-confirm-btn" data-commit="${esc(d.key)}" title="Сохранить изменения"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="row-discard-btn" data-discard="${esc(d.key)}" title="Отменить"><svg viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ''}</td>
   </tr>`;
@@ -255,7 +253,7 @@ function render() {
   if (page >= pages) page = pages - 1;
   const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
   $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="17" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
+    pg.map(rowHtml).join('') || '<tr><td colspan="13" style="text-align:center;color:#888;padding:22px">Нет записей 🎉</td></tr>';
   bindRowEvents();
   $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
   $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
@@ -531,7 +529,7 @@ $('btnAddSpec').onclick = async () => {
   } catch (e) { toast('Ошибка: ' + e.message, true); }
 };
 
-$('fStage').onchange = () => { page = 0; refresh(); };
+$('fCheck').onchange = () => { page = 0; refresh(); };
 $('fStatus').onchange = () => { page = 0; refresh(); };
 $('fMine').onchange = () => { page = 0; refresh(); };
 $('q').oninput = () => { page = 0; render(); };
@@ -556,7 +554,7 @@ $('btnImport').onclick = async () => {
   const b = $('btnImport');
   b.disabled = true; b.textContent = '⏳ Импорт...';
   // Покажем лоадер в таблице
-  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="17" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="13" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
   try {
     const r = await fetch('/api/import', { method: 'POST' });
     if (r.status === 401) return location.href = '/login';

@@ -91,7 +91,7 @@ class _DbWrapper:
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "rmko.db")
-XLSX_PATH = os.path.join(os.path.dirname(BASE), "Рабочее место Корпоративного отдела .xlsx")
+XLSX_PATH = os.path.join(BASE, "Рабочее место Корпоративного отдела.xlsx")
 
 # --- справочники (ИнструкцияДляMain + бэклог листа «Вопросы») ---
 STAGES = ["Счет отправлен", "Оплата есть", "Закрыто", "Не состоялась", "Удалён",
@@ -107,14 +107,20 @@ REJECT_REASONS = ["высокая цена", "выбрали другого по
                   "не оплатили", "нет новых РН", "другое"]
 DELETE_REASONS = ["счет создан ошибочно", "замена счета", "пересоздан документ",
                   "дубль", "другое"]
-CHECK_STATUSES = ["Новая", "Отработано", "Закрыто автоматически"]
+# «Проверка» — автоматический статус (вычисляется в derive, не редактируется)
+CHECK_STATUSES = ["Новая", "В работе", "Закрыто", "Закрыто автоматически"]
+# «Проверка товара» — выпадающий список (редактирует менеджер)
+GOODS_CHECK = ["Ожидает проверки", "Проверено", "Товар есть"]
+GOODS_CHECK_DEFAULT = "Ожидает проверки"
 
 CLOSED_STAGES = {"Закрыто", "Не состоялась", "Удалён", "Заменена"}
 
-# поля, которые редактирует менеджер (разрешены в PATCH)
+# поля, которые редактирует менеджер (разрешены в PATCH).
+# stage / next_step / plan_contact / check_status / in_stock / reject_reason
+# исключены — теперь это либо вычисляемые (авто), либо удалённые из интерфейса поля.
 EDITABLE = {
-    "stage", "next_step", "plan_contact", "last_contact", "close_date",
-    "reject_reason", "delete_reason", "notes", "check_status", "in_stock",
+    "last_contact", "close_date",
+    "delete_reason", "notes", "goods_check",
     "closing_docs", "delivery", "contract_num", "lead_source", "mgr_comment",
 }
 
@@ -129,6 +135,9 @@ CREATE TABLE IF NOT EXISTS deals (
     stage TEXT, next_step TEXT, plan_contact TEXT, last_contact TEXT,
     close_date TEXT, reject_reason TEXT, delete_reason TEXT, notes TEXT,
     check_status TEXT, in_stock INTEGER, closing_docs INTEGER, delivery TEXT,
+    goods_check TEXT DEFAULT 'Ожидает проверки',
+    status_1c TEXT, payment_amount REAL, payment_source TEXT,
+    payment_date TEXT, has_payment INTEGER DEFAULT 0,
     contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
     flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
     updated_at TEXT, updated_by TEXT
@@ -164,11 +173,42 @@ CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 """
 
 
+_migrated = False
+
+# колонки, которые могли появиться позже схемы — догоняем ALTER-ом на живой БД
+_ADDED_COLUMNS = {
+    "goods_check": "TEXT DEFAULT 'Ожидает проверки'",
+    "status_1c": "TEXT",
+    "payment_amount": "REAL",
+    "payment_source": "TEXT",
+    "payment_date": "TEXT",
+    "has_payment": "INTEGER DEFAULT 0",
+}
+
+
+def _ensure_migrations(con):
+    """Идемпотентно догоняем схему на уже существующей БД (в т.ч. Turso),
+    где CREATE TABLE IF NOT EXISTS новые колонки не добавляет."""
+    global _migrated
+    if _migrated:
+        return
+    try:
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(deals)")}
+        for name, ddl in _ADDED_COLUMNS.items():
+            if name not in cols:
+                con.execute(f"ALTER TABLE deals ADD COLUMN {name} {ddl}")
+        con.commit()
+    except Exception as e:
+        print("MIGRATION WARNING:", e)
+    _migrated = True
+
+
 def db():
     url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
     auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
     con = _DbWrapper(url, auth_token)
     con.executescript(SCHEMA)
+    _ensure_migrations(con)
     return con
 
 
@@ -254,6 +294,20 @@ def opt_bool(v):
     return None
 
 
+def status_flags(status_text):
+    """В новой выгрузке 1С нет отдельных колонок ПометкаУдаления/Проведен/Резерв —
+    есть одна колонка «Статус» (Выдан / Резерв / Удален). Разворачиваем её обратно
+    в флаги, чтобы cur_status и остальная логика работали без изменений."""
+    s = (clean_text(status_text) or "").lower()
+    if s.startswith("удал"):                    # Удален / Удалён
+        return {"deleted": 1, "posted": 0, "reserved": 0}
+    if s.startswith("резерв"):                  # Резерв (проведён, но в резерве)
+        return {"deleted": 0, "posted": 1, "reserved": 1}
+    if s.startswith("выдан"):                   # Выдан (товар выдан)
+        return {"deleted": 0, "posted": 1, "reserved": 0}
+    return {"deleted": 0, "posted": 0, "reserved": 0}
+
+
 def workdays_between(d_from, d_to):
     """Рабочие дни (без сб/вс) между датами, минимум 0."""
     if not d_from:
@@ -316,65 +370,67 @@ def cur_status(d):
     return "Резерв"
 
 
-def derive(d, today=None):
-    """Вычислить производные поля сделки по правилам ИнструкцииДляMain."""
+def derive(d, today=None, hist_count=0):
+    """Вычислить производные поля сделки.
+
+    Этап сделки убран — статус/подсказка строятся по статусу 1С (cur_status)
+    и факту оплаты (ЕстьОплата), плюс срок в рабочих днях.
+    """
     today = today or date.today()
     st = cur_status(d)
-    stage = d["stage"] or ""
-    in_stock = bool(d["in_stock"])
+    has_payment = bool(d.get("has_payment"))
+    # «Товар есть» в колонке «Проверка товара» = товар в наличии
+    goods_check = d.get("goods_check") or GOODS_CHECK_DEFAULT
+    in_stock = bool(d["in_stock"]) or goods_check == "Товар есть"
     wd = workdays_between(d["doc_date"] or d["created_at"], today)
 
     errors = []
-    if stage == "Закрыто" and (not in_stock or not d["close_date"]):
-        need = []
-        if not in_stock:
-            need.append("✔ товар в наличии")
-        if not d["close_date"]:
-            need.append("дата закрытия")
-        errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
-    if stage == "Удалён":
-        if not d["delete_reason"]:
-            errors.append("Удалён: не указана причина удаления")
-        if not d["close_date"]:
-            errors.append("Удалён: не указана дата удаления")
-    if stage == "Не состоялась":
-        if not d["reject_reason"]:
-            errors.append("Не состоялась: не указана причина отказа")
-        if not d["close_date"]:
-            errors.append("Не состоялась: не указана дата")
-    if st == "Удалён" and stage not in ("Удалён", "Не состоялась", "Заменена"):
-        errors.append("РН удалена в 1С — выбрать этап «Удалён» или «Не состоялась» и причину")
 
-    # подсказка (что происходит со сделкой и что делать)
-    if errors:
-        hint, level = " · ".join(errors), "error"
-    elif st == "Удалён" or stage in ("Удалён", "Не состоялась"):
-        hint, level = "Закрыта без продажи", "closed"
-    elif stage == "Заменена":
-        hint, level = "Заменена другой РН", "closed"
-    elif st == "Выдан" or (stage == "Закрыто" and in_stock):
+    # подсказка (что происходит со сделкой и что делать) — без «Этапа сделки»
+    if st == "Удален":
+        hint, level = "Без продажи (удалена в 1С)", "closed"
+    elif st == "Выдан":
         hint, level = "Товар выдан", "done"
-    elif stage == "Оплата есть" and in_stock:
-        hint, level = "Оплачена, выдать товар", "ready"
-    elif stage == "Оплата есть":
-        hint, level = "Ожидаем товар", "paid"
-    elif stage == "Счет отправлен" and wd >= 3:
+    elif has_payment and in_stock:
+        hint, level = "Оплачено — выдать товар", "ready"
+    elif has_payment:
+        hint, level = "Оплачено — ожидаем товар", "paid"
+    elif wd >= 3:
         hint, level = "Связаться по оплате", "risk"
-    elif (stage == "Счет отправлен" or st == "Резерв") and wd >= 2:
+    elif wd >= 2:
         hint, level = "Требует контроля", "warn"
-    elif stage == "Сервис":
-        hint, level = "Сервисная РН", "info"
-    elif not stage and st == "Резерв":
-        hint, level = 'Не указан "Этап сделки"', "new"
     else:
         hint, level = "В работе", "info"
 
-    overdue = bool(d["plan_contact"] and d["plan_contact"][:10] < today.strftime("%Y-%m-%d")
-                   and level not in ("done", "closed"))
+    # «Связаться с клиентом»: авто = дата сделки + 2 дня (нередактируемо).
+    # Цвет: сегодня < даты — зелёный, == — жёлтый, > — красный.
+    contact_date, contact_color = None, ""
+    base_date = (d["doc_date"] or d["created_at"] or "")[:10]
+    try:
+        cd = datetime.strptime(base_date, "%Y-%m-%d").date() + timedelta(days=2)
+        contact_date = cd.strftime("%Y-%m-%d")
+        contact_color = "green" if today < cd else ("yellow" if today == cd else "red")
+    except ValueError:
+        pass
+
+    # «Проверка» — автоматический статус по истории изменений и статусу 1С.
+    posted = bool(d["posted"])
+    if posted and hist_count == 0:
+        check_status = "Закрыто автоматически"
+    elif posted and hist_count > 0:
+        check_status = "Закрыто"
+    elif hist_count > 0:
+        check_status = "В работе"
+    else:
+        check_status = "Новая"
+
+    overdue = bool(contact_color == "red" and level not in ("done", "closed"))
     closed = level in ("done", "closed") and not errors
     return {
         "cur_status": st, "hint": hint, "level": level, "errors": errors,
         "workdays": wd, "overdue_contact": overdue, "is_closed": closed,
+        "contact_date": contact_date, "contact_color": contact_color,
+        "check_status": check_status, "has_payment": has_payment,
         "phones": phones(d["contacts"]),
     }
 
@@ -396,8 +452,7 @@ COLMAP_1C = {
     "Контакты": "contacts", "Комментарий": "comment_1c",
 }
 COLMAP_MGR = {
-    "Этап сделки": ("stage", clean_text),
-    "Следующий шаг": ("next_step", clean_text),
+    # «Этап сделки» и «Следующий шаг» убраны из логики проекта
     "Дата запланированного контакта": ("plan_contact", parse_date),
     "Дата посл. контакта": ("last_contact", parse_date),
     "Дата закрытия|удаления": ("close_date", parse_date),
@@ -411,7 +466,7 @@ COLMAP_MGR = {
     "Источник лида": ("lead_source", clean_text),
 }
 TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c", "deleted", "posted",
-              "reserved", "client"]
+              "reserved", "client", "status_1c", "has_payment", "payment_amount"]
 
 
 def _sheet_rows(xlsx_path, sheet):
@@ -436,12 +491,11 @@ def import_xlsx(xlsx_path=None, first=False):
     stats = {"new": 0, "updated": 0, "unchanged": 0, "skipped": 0}
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    sheets = []
     xl = pd.ExcelFile(xlsx_path)
-    if "main" in xl.sheet_names:
-        sheets.append("main")
-    if "Import" in xl.sheet_names:
-        sheets.append("Import")
+    # предпочитаем листы main/Import, иначе берём все листы файла (напр. «Лист1»)
+    sheets = [s for s in ("main", "Import") if s in xl.sheet_names]
+    if not sheets:
+        sheets = list(xl.sheet_names)
 
     seen = set()
     for sheet in sheets:
@@ -460,13 +514,22 @@ def import_xlsx(xlsx_path=None, first=False):
             seen.add(key)
 
             vals = {c: clean_text(r.get(src)) for src, c in COLMAP_1C.items()}
+            status_raw = clean_text(r.get("Статус"))
+            flags = status_flags(status_raw)
             vals.update({
                 "key": key, "doc_num": num, "created_at": created,
                 "doc_date": parse_dt(r.get("ДатаДокумента")),
                 "amount": parse_amount(r.get("Сумма")),
-                "deleted": yes(r.get("ПометкаУдаления")),
-                "posted": yes(r.get("Проведен")),
-                "reserved": yes(r.get("Резерв")),
+                # статус из 1С (Выдан/Резерв/Удален) -> флаги для cur_status
+                "deleted": flags["deleted"],
+                "posted": flags["posted"],
+                "reserved": flags["reserved"],
+                "status_1c": status_raw,
+                # оплата
+                "payment_amount": parse_amount(r.get("Оплата")),
+                "payment_source": clean_text(r.get("ИсточникОплаты")),
+                "payment_date": parse_date(r.get("ДатаОплаты")),
+                "has_payment": yes(r.get("ЕстьОплата")),
             })
             mgr_vals = {}
             for src, (cl, fn) in COLMAP_MGR.items():
@@ -511,17 +574,10 @@ def import_xlsx(xlsx_path=None, first=False):
                 else:
                     stats["unchanged"] += 1
 
-    # автозаполнение для выданных накладных (статус «Выдан» в 1С):
-    # этап «Закрыто», ✔товар в наличии, проверка «Закрыто автоматически»,
-    # след. шаг — если был пуст, автодата закрытия (логика «Что нового» 19.03)
+    # автодата закрытия для выданных накладных (статус «Выдан» в 1С).
+    # Логика «Этапа сделки» убрана — этап/статус «Проверки» больше не проставляем.
     cur.execute("""UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
                    WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""")
-    cur.execute("""UPDATE deals SET next_step='Закрыто автоматически'
-                   WHERE (next_step IS NULL OR next_step='')
-                     AND posted=1 AND reserved=0 AND deleted=0""")
-    cur.execute("""UPDATE deals SET stage='Закрыто', in_stock=1,
-                          check_status='Закрыто автоматически'
-                   WHERE posted=1 AND reserved=0 AND deleted=0""")
 
     cur.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,))
     con.commit()
