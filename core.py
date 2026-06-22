@@ -15,10 +15,10 @@ import os
 import re
 import sqlite3
 try:
-    import libsql_experimental as libsql_exp
+    import libsql_client
     _HAS_LIBSQL = True
 except ImportError:
-    libsql_exp = None  # type: ignore
+    libsql_client = None  # type: ignore
     _HAS_LIBSQL = False
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
@@ -57,15 +57,23 @@ class _DummyCursor:
     def __iter__(self):
         return iter(self._rows)
 
+
+def _split_sql_script(sql_script):
+    return [stmt.strip() for stmt in sql_script.split(";") if stmt.strip()]
+
+
 class _DbWrapper:
     def __init__(self, url, auth_token):
-        if url.startswith("file:") or not _HAS_LIBSQL:
+        if url.startswith("file:"):
             self.con = sqlite3.connect(url.replace("file:", ""))
             self.con.row_factory = sqlite3.Row
             self.is_sqlite = True
         else:
-            self.client = libsql_exp.connect(
-                database=url,
+            if not _HAS_LIBSQL:
+                raise RuntimeError("libsql_client is required for remote database URLs")
+            remote_url = url.replace("libsql://", "https://")
+            self.client = libsql_client.create_client_sync(
+                remote_url,
                 auth_token=auth_token,
             )
             self.is_sqlite = False
@@ -81,7 +89,7 @@ class _DbWrapper:
                 return self.con.execute(sql, params)
             return self.con.execute(sql)
         else:
-            args = list(params) if params is not None else []
+            args = params if params is not None else []
             result = self.client.execute(sql, args)
             return _DummyCursor(result)
 
@@ -89,7 +97,9 @@ class _DbWrapper:
         if self.is_sqlite:
             self.con.executescript(sql_script)
         else:
-            self.client.executescript(sql_script)
+            statements = _split_sql_script(sql_script)
+            if statements:
+                self.client.batch(statements)
     
     def execute_batch(self, statements_list):
         """Отправляет список (sql, params) батчами по 500 — минимум HTTP round-trips."""
@@ -111,22 +121,10 @@ class _DbWrapper:
                     if params is None:
                         parts.append(sql)
                     elif isinstance(params, dict):
-                        s = sql
-                        # Сортируем ключи по длине в порядке убывания, чтобы предотвратить замену подстрок (например, :doc внутри :doc_num)
-                        for k in sorted(params.keys(), key=len, reverse=True):
-                            v = params[k]
-                            escaped = "NULL" if v is None else "'{}'".format(
-                                str(v).replace("'", "''"))
-                            s = s.replace(f":{k}", escaped)
-                        parts.append(s)
+                        parts.append(libsql_client.Statement(sql, params))
                     else:
-                        s = sql
-                        for v in params:
-                            escaped = "NULL" if v is None else "'{}'".format(
-                                str(v).replace("'", "''"))
-                            s = s.replace("?", escaped, 1)
-                        parts.append(s)
-                self.client.executescript(";\n".join(parts))
+                        parts.append(libsql_client.Statement(sql, params))
+                self.client.batch(parts)
     
     def commit(self):
         if self.is_sqlite:
@@ -157,6 +155,7 @@ REJECT_REASONS = ["высокая цена", "выбрали другого по
 DELETE_REASONS = ["счет создан ошибочно", "замена счета", "пересоздан документ",
                   "дубль", "другое"]
 CHECK_STATUSES = ["Новая", "Отработано", "Закрыто автоматически"]
+GOODS_CHECK = ["Ожидает проверки", "Проверено", "Товар есть"]
 
 CLOSED_STAGES = {"Закрыто", "Не состоялась", "Удалён", "Заменена"}
 

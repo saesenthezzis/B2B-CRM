@@ -1,6 +1,6 @@
 Flask
 pandas
 openpyxl
-libsql-experimental>=0.0.19
+libsql-client
 python-dotenv
 gunicorn
