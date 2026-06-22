@@ -369,6 +369,21 @@ def workdays_between(d_from, d_to):
     return days
 
 
+def add_workdays(d_from, days):
+    if not d_from:
+        return None
+    try:
+        cur = datetime.strptime(d_from[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    added = 0
+    while added < days:
+        cur += timedelta(days=1)
+        if cur.weekday() < 5:
+            added += 1
+    return cur
+
+
 def phones(contacts):
     """Достать телефоны для ссылок WhatsApp (wa.me)."""
     if not contacts:
@@ -430,22 +445,21 @@ def derive(d, today=None, user_action_keys=None):
     today = today or date.today()
     st = cur_status(d)
     stage = d["stage"] or ""
+    paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
     
     in_stock_val = d.get("in_stock") or "Ожидает проверки"
     in_stock_ok = in_stock_val in ("Проверено", "Товар есть")
     
     wd = workdays_between(d["doc_date"] or d["created_at"], today)
 
-    # 1. Автоматический План конт. = дата документа + 2 дня
+    # 1. Автоматический План конт. = дата документа + 2 рабочих дня
     doc_date_str = d.get("doc_date") or d.get("created_at")
     plan_contact = None
     plan_color = ""
     if doc_date_str:
-        try:
-            doc_dt = datetime.strptime(doc_date_str[:10], "%Y-%m-%d")
-            plan_contact = (doc_dt + timedelta(days=2)).strftime("%Y-%m-%d")
-            
-            # Логика окрашивания
+        due = add_workdays(doc_date_str, 2)
+        if due:
+            plan_contact = due.strftime("%Y-%m-%d")
             today_str = today.strftime("%Y-%m-%d")
             plan_contact_str = plan_contact[:10]
             if today_str < plan_contact_str:
@@ -454,16 +468,16 @@ def derive(d, today=None, user_action_keys=None):
                 plan_color = "yellow"
             else:
                 plan_color = "red"
-        except ValueError:
-            pass
 
     # 2. Автоматический статус Проверка
     has_user_action = False
     if user_action_keys is not None:
         has_user_action = d["key"] in user_action_keys
     
-    is_posted = bool(d.get("posted"))
-    if is_posted:
+    is_issued = st == "Выдан" or (
+        bool(d.get("posted")) and not bool(d.get("reserved")) and not bool(d.get("deleted"))
+    )
+    if is_issued:
         chk_status = "Закрыто" if has_user_action else "Закрыто автоматически"
     else:
         chk_status = "В работе" if has_user_action else "Новая"
@@ -476,7 +490,7 @@ def derive(d, today=None, user_action_keys=None):
         if not d["close_date"]:
             need.append("дата закрытия")
         errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
-    if stage == "Удалён":
+    if stage == "Удалён" and st not in ("Удалён", "Удален"):
         if not d["delete_reason"]:
             errors.append("Удалён: не указана причина удаления")
         if not d["close_date"]:
@@ -487,31 +501,36 @@ def derive(d, today=None, user_action_keys=None):
         if not d["close_date"]:
             errors.append("Не состоялась: не указана дата")
     if st in ("Удалён", "Удален") and stage not in ("Удалён", "Не состоялась", "Заменена"):
-        errors.append("РН удалена в 1С — выбрать этап «Удалён» или «Не состоялась» и причину")
-
-    # подсказка (что происходит со сделкой и что делать)
-    if errors:
-        hint, level = " · ".join(errors), "error"
+        errors = []
+        hint, level = "Удалено в 1С", "closed"
+    elif errors:
+        hint, level = "Проверить клиента", "error"
     elif st in ("Удалён", "Удален") or stage in ("Удалён", "Не состоялась"):
-        hint, level = "Закрыта без продажи", "closed"
+        hint, level = "Клиент отказался", "closed"
     elif stage == "Заменена":
-        hint, level = "Заменена другой РН", "closed"
+        hint, level = "Обновить клиента", "closed"
     elif st == "Выдан" or (stage == "Закрыто" and in_stock_ok):
         hint, level = "Товар выдан", "done"
+    elif st == "Резерв" and paid and in_stock_ok:
+        hint, level = "Согласовать выдачу", "ready"
+    elif st == "Резерв" and paid:
+        hint, level = "Сообщить срок", "paid"
+    elif st == "Резерв" and wd >= 3:
+        hint, level = "Напомнить оплату", "risk"
+    elif st == "Резерв":
+        hint, level = "Довести до оплаты", "warn"
     elif stage == "Оплата есть" and in_stock_ok:
-        hint, level = "Оплачена, выдать товар", "ready"
+        hint, level = "Согласовать выдачу", "ready"
     elif stage == "Оплата есть":
-        hint, level = "Ожидаем товар", "paid"
+        hint, level = "Сообщить срок", "paid"
     elif stage == "Счет отправлен" and wd >= 3:
-        hint, level = "Связаться по оплате", "risk"
-    elif (stage == "Счет отправлен" or st == "Резерв") and wd >= 2:
-        hint, level = "Требует контроля", "warn"
+        hint, level = "Напомнить оплату", "risk"
+    elif stage == "Счет отправлен":
+        hint, level = "Довести до оплаты", "warn"
     elif stage == "Сервис":
-        hint, level = "Сервисная РН", "info"
-    elif not stage and st == "Резерв":
-        hint, level = 'Не указан "Этап сделки"', "new"
+        hint, level = "Связаться с клиентом", "info"
     else:
-        hint, level = "В работе", "info"
+        hint, level = "Связаться с клиентом", "info"
 
     # Сверяем overdue по plan_contact
     overdue = bool(plan_contact and plan_contact[:10] < today.strftime("%Y-%m-%d")
@@ -824,4 +843,3 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     print("Импорт из:", XLSX_PATH)
     print(import_xlsx())
-

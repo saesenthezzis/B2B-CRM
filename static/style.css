@@ -322,6 +322,17 @@ input, select, textarea, button { font-family: inherit; }
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .radio-inputs .radio:hover .name { color: var(--color-ink); }
+.queue-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(0,0,0,0.06);
+  font-size: 11px;
+}
 
 /* ---------- Table ---------- */
 .tw {
@@ -423,6 +434,43 @@ tr:hover td { background: transparent !important; }
 .flag.NEW { background: rgba(47,127,209,0.1); color: var(--c-new); border: 1px solid rgba(47,127,209,0.2); }
 .flag.UPDATE { background: rgba(225,29,72,0.06); color: var(--c-err); border: 1px solid rgba(225,29,72,0.15); }
 
+.doc-cell { min-width: 96px; }
+.doc-meta {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.doc-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+}
+.payment-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  color: var(--c-ready);
+  background: rgba(5,150,105,0.08);
+  border: 1px solid rgba(5,150,105,0.2);
+  font-size: 10px;
+  font-weight: 700;
+}
+.auto-stage {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--color-ink-secondary);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.08);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* ---------- Hint ---------- */
 .hint {
   font-size: 11px;
@@ -431,6 +479,17 @@ tr:hover td { background: transparent !important; }
   max-width: 180px;
 }
 .hint.err { color: var(--c-err); font-weight: 600; }
+.late-mark {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  color: var(--c-risk);
+  background: rgba(220,38,38,0.08);
+  border: 1px solid rgba(220,38,38,0.18);
+  font-size: 10px;
+  font-weight: 700;
+}
 
 /* ---------- Table inline controls ---------- */
 td select, td input[type=date], td input[type=text] {
@@ -881,5 +940,3 @@ dialog button:hover { background: #333; }
   display: inline-block;
   white-space: nowrap;
 }
-
-

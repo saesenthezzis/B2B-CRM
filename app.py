@@ -12,6 +12,7 @@ import string
 import smtplib
 from email.message import EmailMessage
 from functools import wraps
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -77,7 +78,8 @@ def deals():
 @app.patch("/api/deal/<path:key>")
 @login_required
 def patch_deal(key):
-    user = session.get("username", "аноним")
+    selected_user = (request.headers.get("X-User") or "").strip()
+    user = unquote(selected_user) if selected_user else session.get("username", "аноним")
     data = request.get_json(force=True) or {}
     fields = {k: v for k, v in data.items() if k in core.EDITABLE}
     if not fields:
