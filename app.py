@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from functools import wraps
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from flask import Flask, jsonify, request, send_from_directory, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash

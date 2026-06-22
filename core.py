@@ -14,11 +14,11 @@
 import os
 import re
 import sqlite3
-import libsql as libsql_exp
+import libsql_experimental as libsql_exp
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 class _DummyCursor:
     def __init__(self, rs):
