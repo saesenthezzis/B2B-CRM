@@ -459,6 +459,17 @@ tr:hover td { background: transparent !important; }
   font-size: 10px;
   font-weight: 700;
 }
+.auto-stage {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--color-ink-secondary);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.08);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 
 /* ---------- Hint ---------- */
 .hint {
@@ -929,4 +940,3 @@ dialog button:hover { background: #333; }
   display: inline-block;
   white-space: nowrap;
 }
-

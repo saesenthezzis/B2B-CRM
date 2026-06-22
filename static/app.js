@@ -205,6 +205,23 @@ function paymentBadge(d) {
   return `<span class="payment-badge">${label}</span>`;
 }
 
+function autoStageLabel(d) {
+  const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
+  if (['Не состоялась', 'Удалён', 'Заменена', 'Сервис'].includes(d.stage)) return d.stage;
+  if (d.cur_status === 'Удалён' || d.cur_status === 'Удален') return 'Удалено в 1С';
+  if (d.cur_status === 'Выдан') return 'Закрыто';
+  if (d.cur_status === 'Резерв' && paid) return 'Оплата есть';
+  if (d.cur_status === 'Резерв') return 'Ожидаем оплату';
+  return d.stage || 'В работе';
+}
+
+function stageCell(d) {
+  if (['Резерв', 'Выдан', 'Удалён', 'Удален'].includes(d.cur_status)) {
+    return `<span class="auto-stage">${esc(autoStageLabel(d))}</span>`;
+  }
+  return selectHtml(d, 'stage', META.stages);
+}
+
 function rowHtml(d) {
   const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
@@ -215,7 +232,7 @@ function rowHtml(d) {
   const planColorClass = d.plan_color === 'green' ? 'plan-green' : d.plan_color === 'yellow' ? 'plan-yellow' : 'plan-red';
   const reason = d.stage === 'Не состоялась'
     ? selectHtml(d, 'reject_reason', META.reject_reasons)
-    : (d.stage === 'Удалён' || d.cur_status === 'Удалён' || d.cur_status === 'Удален')
+    : d.stage === 'Удалён'
       ? selectHtml(d, 'delete_reason', META.delete_reasons)
       : '<span class="cl">—</span>';
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
@@ -227,7 +244,7 @@ function rowHtml(d) {
     <td>${esc(d.city || '')}</td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td class="sum">${money(d.amount)}${paymentBadge(d)}</td>
-    <td>${selectHtml(d, 'stage', META.stages)}</td>
+    <td>${stageCell(d)}</td>
     <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено", "Товар есть"], false)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
     <td>${reason}</td>

@@ -445,6 +445,7 @@ def derive(d, today=None, user_action_keys=None):
     today = today or date.today()
     st = cur_status(d)
     stage = d["stage"] or ""
+    paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
     
     in_stock_val = d.get("in_stock") or "Ожидает проверки"
     in_stock_ok = in_stock_val in ("Проверено", "Товар есть")
@@ -489,7 +490,7 @@ def derive(d, today=None, user_action_keys=None):
         if not d["close_date"]:
             need.append("дата закрытия")
         errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
-    if stage == "Удалён":
+    if stage == "Удалён" and st not in ("Удалён", "Удален"):
         if not d["delete_reason"]:
             errors.append("Удалён: не указана причина удаления")
         if not d["close_date"]:
@@ -500,35 +501,36 @@ def derive(d, today=None, user_action_keys=None):
         if not d["close_date"]:
             errors.append("Не состоялась: не указана дата")
     if st in ("Удалён", "Удален") and stage not in ("Удалён", "Не состоялась", "Заменена"):
-        errors.append("РН удалена в 1С — выбрать этап «Удалён» или «Не состоялась» и причину")
-
-    # подсказка (что происходит со сделкой и что делать)
-    if errors:
-        if st in ("Удалён", "Удален"):
-            hint = "Указать причину"
-        else:
-            hint = "Исправить данные"
-        level = "error"
+        errors = []
+        hint, level = "Удалено в 1С", "closed"
+    elif errors:
+        hint, level = "Проверить клиента", "error"
     elif st in ("Удалён", "Удален") or stage in ("Удалён", "Не состоялась"):
-        hint, level = "Без продажи", "closed"
+        hint, level = "Клиент отказался", "closed"
     elif stage == "Заменена":
-        hint, level = "Сделка заменена", "closed"
+        hint, level = "Обновить клиента", "closed"
     elif st == "Выдан" or (stage == "Закрыто" and in_stock_ok):
         hint, level = "Товар выдан", "done"
+    elif st == "Резерв" and paid and in_stock_ok:
+        hint, level = "Согласовать выдачу", "ready"
+    elif st == "Резерв" and paid:
+        hint, level = "Сообщить срок", "paid"
+    elif st == "Резерв" and wd >= 3:
+        hint, level = "Напомнить оплату", "risk"
+    elif st == "Резерв":
+        hint, level = "Довести до оплаты", "warn"
     elif stage == "Оплата есть" and in_stock_ok:
-        hint, level = "Выдать товар", "ready"
+        hint, level = "Согласовать выдачу", "ready"
     elif stage == "Оплата есть":
-        hint, level = "Проверить товар", "paid"
+        hint, level = "Сообщить срок", "paid"
     elif stage == "Счет отправлен" and wd >= 3:
-        hint, level = "Позвонить клиенту", "risk"
-    elif (stage == "Счет отправлен" or st == "Резерв") and wd >= 2:
-        hint, level = "Проверить статус", "warn"
+        hint, level = "Напомнить оплату", "risk"
+    elif stage == "Счет отправлен":
+        hint, level = "Довести до оплаты", "warn"
     elif stage == "Сервис":
-        hint, level = "Сервис", "info"
-    elif not stage and st == "Резерв":
-        hint, level = "Выбрать этап", "new"
+        hint, level = "Связаться с клиентом", "info"
     else:
-        hint, level = "В работе", "info"
+        hint, level = "Связаться с клиентом", "info"
 
     # Сверяем overdue по plan_contact
     overdue = bool(plan_contact and plan_contact[:10] < today.strftime("%Y-%m-%d")
