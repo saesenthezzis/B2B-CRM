@@ -14,7 +14,12 @@
 import os
 import re
 import sqlite3
-import libsql_experimental as libsql_exp
+try:
+    import libsql_experimental as libsql_exp
+    _HAS_LIBSQL = True
+except ImportError:
+    libsql_exp = None  # type: ignore
+    _HAS_LIBSQL = False
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
@@ -54,7 +59,7 @@ class _DummyCursor:
 
 class _DbWrapper:
     def __init__(self, url, auth_token):
-        if url.startswith("file:"):
+        if url.startswith("file:") or not _HAS_LIBSQL:
             self.con = sqlite3.connect(url.replace("file:", ""))
             self.con.row_factory = sqlite3.Row
             self.is_sqlite = True
