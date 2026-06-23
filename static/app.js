@@ -534,36 +534,9 @@ function renderSettings() {
     `<tr>
       <td>${esc(s.name)}</td>
       <td>${esc(s.city)}</td>
-      <td><button class="iconbtn" onclick="delSpec(${s.id})" title="Удалить">❌</button></td>
     </tr>`
-  ).join('') || '<tr><td colspan="3">Нет данных</td></tr>';
+  ).join('') || '<tr><td colspan="2">Нет данных</td></tr>';
 }
-
-async function delSpec(id) {
-  if (!confirm('Удалить эту зону ответственности?')) return;
-  try {
-    const r = await fetch('/api/specialists/' + id, { method: 'DELETE' });
-    if (!r.ok) throw new Error(await r.text());
-    toast('Удалено ✓');
-    await loadAll();
-  } catch (e) { toast('Ошибка: ' + e.message, true); }
-}
-
-$('btnAddSpec').onclick = async () => {
-  const name = $('newSpecName').value.trim(), city = $('newSpecCity').value.trim();
-  if (!name || !city) return toast('Введите имя и город', true);
-  try {
-    const r = await fetch('/api/specialists', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, city })
-    });
-    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-    toast('Добавлено ✓');
-    $('newSpecName').value = ''; $('newSpecCity').value = '';
-    await loadAll();
-  } catch (e) { toast('Ошибка: ' + e.message, true); }
-};
 
 $('fStage').onchange = () => { page = 0; refresh(); };
 $('fStatus').onchange = () => { page = 0; refresh(); };
