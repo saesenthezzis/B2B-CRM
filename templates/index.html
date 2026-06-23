@@ -64,15 +64,18 @@
   <!-- ======== Сделки ======== -->
   <section id="v-mgr">
 
-    <!-- Filters + Queue Tabs row -->
+    <!-- Queue Tabs -->
+    <div id="queues" style="margin-bottom: 10px;"></div>
+
+    <!-- Filters row -->
     <div class="filters-row">
       <select class="aether-select" id="fPeriod">
         <option value="">Период: все</option>
-        <option value="day">День</option>
-        <option value="week">Неделя</option>
-        <option value="month">Месяц</option>
-        <option value="year">Год</option>
-        <option value="manual">Вручную</option>
+        <option value="day">Период: день</option>
+        <option value="week">Период: неделя</option>
+        <option value="month">Период: месяц</option>
+        <option value="year">Период: год</option>
+        <option value="manual">Период: вручную</option>
       </select>
 
       <span id="manualDates" class="hidden" style="display:none; gap:8px; align-items:center;">
@@ -82,13 +85,19 @@
 
       <select class="aether-select" id="fStatus">
         <option value="">Статус: все</option>
-        <option value="Резерв">Резерв</option>
-        <option value="Выдан">Выдан</option>
-        <option value="Удален">Удален</option>
+        <option value="Резерв">Статус: резерв</option>
+        <option value="Выдан">Статус: выдан</option>
+        <option value="Удален">Статус: удален</option>
       </select>
 
       <select class="aether-select" id="fStage">
         <option value="">Этап: все</option>
+      </select>
+
+      <select class="aether-select" id="fPayment">
+        <option value="">Оплата: все</option>
+        <option value="paid">Оплата: оплачено</option>
+        <option value="unpaid">Оплата: без оплаты</option>
       </select>
 
       <label class="filter-toggle">
@@ -110,9 +119,6 @@
                placeholder="контрагент, №, телефон...">
       </div>
     </div>
-
-    <!-- Queue Tabs -->
-    <div id="queues" style="margin-bottom: 10px;"></div>
 
     <!-- Table (no wrapper box) -->
     <table id="tbl" class="main-table">

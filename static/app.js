@@ -40,7 +40,18 @@ async function loadAll() {
     });
     fillUserSelect();
     fillCitySelect();
-    fillSelect($('fStage'), m.stages.concat(['(пусто)']));
+    fillSelect($('fStage'), m.stages.map(s => 'Этап: ' + s).concat(['(пусто)']), localStorage.getItem('fStage') || '');
+    
+    // Restore filter values from localStorage
+    if (localStorage.getItem('fPeriod')) $('fPeriod').value = localStorage.getItem('fPeriod');
+    if (localStorage.getItem('fStatus')) $('fStatus').value = localStorage.getItem('fStatus');
+    if (localStorage.getItem('fPayment')) $('fPayment').value = localStorage.getItem('fPayment');
+    
+    // Update visual states for restored filters
+    updateFilterVisual($('fPeriod'));
+    updateFilterVisual($('fStatus'));
+    updateFilterVisual($('fPayment'));
+    
     applyManagerZone(false);
     render();
   } catch (e) {
@@ -49,19 +60,36 @@ async function loadAll() {
   }
 }
 
+function updateFilterVisual(sel) {
+  if (sel.value && sel.value !== '') {
+    sel.classList.add('filter-active');
+  } else {
+    sel.classList.remove('filter-active');
+  }
+}
+
 function fillSelect(sel, vals, chosen) {
   const first = sel.querySelector('option');
   sel.innerHTML = ''; sel.appendChild(first);
   vals.forEach(v => {
     const o = document.createElement('option');
-    o.textContent = v; if (v === chosen) o.selected = true;
+    // For stage filter, separate display text from value
+    if (sel.id === 'fStage' && v !== '(пусто)' && v.startsWith('Этап: ')) {
+      o.textContent = v;
+      o.value = v.replace('Этап: ', '');
+      if (o.value === chosen) o.selected = true;
+    } else {
+      o.textContent = v; if (v === chosen) o.selected = true;
+    }
     sel.appendChild(o);
   });
+  updateFilterVisual(sel);
 }
 
 function fillUserSelect() {
   const names = Object.keys(SPEC).sort((a, b) => a.localeCompare(b, 'ru'));
   fillSelect($('user'), names, localStorage.getItem('user') || '');
+  updateFilterVisual($('user'));
 }
 
 function fillCitySelect() {
@@ -72,6 +100,7 @@ function fillCitySelect() {
   ensureZoneOption();
   $('myCity').value = saved;
   if ($('myCity').selectedIndex < 0) $('myCity').value = '';
+  updateFilterVisual($('myCity'));
 }
 
 function ensureZoneOption() {
@@ -147,7 +176,7 @@ function periodRange() {
 }
 
 function baseFiltered() {
-  const city = $('myCity').value, stage = $('fStage').value, status = $('fStatus').value;
+  const city = $('myCity').value, stage = $('fStage').value, status = $('fStatus').value, payment = $('fPayment').value;
   const q = $('q').value.toLowerCase(), mine = $('fMine').checked;
   const me = ($('user').value || '').toLowerCase();
   const zoneCities = SPEC[$('user').value] || [];
@@ -157,6 +186,11 @@ function baseFiltered() {
     else if (city && d.city !== city) return false;
     if (stage && (stage === '(пусто)' ? d.stage : d.stage !== stage)) return false;
     if (status && d.cur_status !== status) return false;
+    if (payment) {
+      const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
+      if (payment === 'paid' && !paid) return false;
+      if (payment === 'unpaid' && paid) return false;
+    }
     if (mine && me && !(d.author || '').toLowerCase().includes(me)) return false;
     if (range) {
       const dd = (d.doc_date || d.created_at || '').slice(0, 10);
@@ -538,11 +572,14 @@ function renderSettings() {
   ).join('') || '<tr><td colspan="2">Нет данных</td></tr>';
 }
 
-$('fStage').onchange = () => { page = 0; refresh(); };
-$('fStatus').onchange = () => { page = 0; refresh(); };
+$('fStage').onchange = () => { localStorage.setItem('fStage', $('fStage').value); updateFilterVisual($('fStage')); page = 0; refresh(); };
+$('fStatus').onchange = () => { localStorage.setItem('fStatus', $('fStatus').value); updateFilterVisual($('fStatus')); page = 0; refresh(); };
+$('fPayment').onchange = () => { localStorage.setItem('fPayment', $('fPayment').value); updateFilterVisual($('fPayment')); page = 0; refresh(); };
 $('fMine').onchange = () => { page = 0; refresh(); };
 $('q').oninput = () => { page = 0; render(); };
 $('fPeriod').onchange = () => {
+  localStorage.setItem('fPeriod', $('fPeriod').value);
+  updateFilterVisual($('fPeriod'));
   const manual = $('fPeriod').value === 'manual';
   const el = $('manualDates');
   if (manual) { el.classList.remove('hidden'); el.style.display = 'flex'; }
@@ -550,9 +587,10 @@ $('fPeriod').onchange = () => {
   page = 0; refresh();
 };
 $('fFrom').onchange = $('fTo').onchange = () => { page = 0; refresh(); };
-$('myCity').onchange = () => { localStorage.setItem('myCity', $('myCity').value); page = 0; refresh(); };
+$('myCity').onchange = () => { localStorage.setItem('myCity', $('myCity').value); updateFilterVisual($('myCity')); page = 0; refresh(); };
 $('user').onchange = () => {
   localStorage.setItem('user', $('user').value);
+  updateFilterVisual($('user'));
   applyManagerZone();
   page = 0; refresh();
 };

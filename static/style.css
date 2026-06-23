@@ -188,10 +188,15 @@ input, select, textarea, button { font-family: inherit; }
   appearance: none;
   color: var(--color-ink);
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
 }
 .aether-select:hover { border-color: rgba(0,0,0,0.15); }
 .aether-select:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.aether-select.filter-active {
+  border-color: var(--color-accent);
+  background-color: rgba(0,122,255,0.04);
+  font-weight: 600;
+}
 
 /* ---------- Aether Search ---------- */
 .aether-search {
