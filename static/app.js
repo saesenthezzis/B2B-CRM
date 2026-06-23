@@ -109,17 +109,19 @@ const QUEUES = [
     const isIssued = d.cur_status === 'Выдан';
     // Неоплаченные документы со статусом "Резерв"
     if (d.cur_status === 'Резерв' && !paid) return true;
-    // Удаленные без причины
-    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && !d.delete_reason) return true;
+    // Удаленные без заметки
+    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && !d.notes) return true;
     // Оплаченные документы и не выданные, со статусом "Резерв"
     if (d.cur_status === 'Резерв' && paid && !isIssued) return true;
     return false;
   }},
-  { id: 'done', name: 'Закрытые', f: d => {
-    const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
-    return d.is_closed && d.level === 'done' && paid;
+  { id: 'done', name: 'Закрытые', f: d => d.cur_status === 'Выдан' },
+  { id: 'lost', name: 'Без продажи', f: d => {
+    // Удаленные с заполненной заметкой
+    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && d.notes) return true;
+    // Другие закрытые, но не выданные
+    return d.is_closed && d.level !== 'done';
   } },
-  { id: 'lost', name: 'Без продажи', f: d => d.is_closed && d.level !== 'done' },
   { id: 'all', name: 'Все', f: () => true },
 ];
 

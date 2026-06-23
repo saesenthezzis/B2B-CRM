@@ -519,7 +519,10 @@ def derive(d, today=None, user_action_keys=None):
     
     # Новая логика на основе status_1c
     if st in ("Удален", "Удалён"):
-        hint, level = "Удален в 1С", "closed"
+        if not d.get("notes"):
+            hint, level = "Указать причину", "error"
+        else:
+            hint, level = "Удален в 1С", "closed"
     elif errors:
         hint, level = "Проверить", "error"
     elif st == "Выдан":
