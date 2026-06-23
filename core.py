@@ -155,7 +155,7 @@ REJECT_REASONS = ["высокая цена", "выбрали другого по
 DELETE_REASONS = ["счет создан ошибочно", "замена счета", "пересоздан документ",
                   "дубль", "другое"]
 CHECK_STATUSES = ["Новая", "Отработано", "Закрыто автоматически"]
-GOODS_CHECK = ["Ожидает проверки", "Проверено", "Товар есть"]
+GOODS_CHECK = ["Ожидает проверки", "Проверено"]
 
 CLOSED_STAGES = {"Закрыто", "Не состоялась", "Удалён", "Заменена"}
 
@@ -230,6 +230,7 @@ UPDATE deals SET in_stock = CASE
     WHEN in_stock = 1 OR in_stock = '1' THEN 'Проверено'
     WHEN in_stock = 0 OR in_stock = '0' THEN 'Ожидает проверки'
     WHEN in_stock IS NULL OR in_stock = '' THEN 'Ожидает проверки'
+    WHEN in_stock = 'Товар есть' THEN 'Проверено'
     ELSE in_stock
 END
 """
@@ -448,7 +449,22 @@ def derive(d, today=None, user_action_keys=None):
     paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
     
     in_stock_val = d.get("in_stock") or "Ожидает проверки"
-    in_stock_ok = in_stock_val in ("Проверено", "Товар есть")
+    # Автоматическое изменение in_stock на основе status_1c
+    if st in ("Удален", "Удалён"):
+        if in_stock_val == "Проверено":
+            in_stock_val = "Закрыто"
+        else:
+            in_stock_val = "Закрыто автоматически"
+    elif st == "Выдан":
+        if in_stock_val == "Проверено":
+            in_stock_val = "Закрыто"
+        else:
+            in_stock_val = "Закрыто автоматически"
+    # Убираем "Товар есть" - заменяем на "Проверено"
+    elif in_stock_val == "Товар есть":
+        in_stock_val = "Проверено"
+    
+    in_stock_ok = in_stock_val == "Проверено"
     
     wd = workdays_between(d["doc_date"] or d["created_at"], today)
 
@@ -486,7 +502,7 @@ def derive(d, today=None, user_action_keys=None):
     if stage == "Закрыто" and (not in_stock_ok or not d["close_date"]):
         need = []
         if not in_stock_ok:
-            need.append("✔ товар в наличии (Проверено / Товар есть)")
+            need.append("✔ товар в наличии (Проверено)")
         if not d["close_date"]:
             need.append("дата закрытия")
         errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
@@ -500,32 +516,23 @@ def derive(d, today=None, user_action_keys=None):
             errors.append("Не состоялась: не указана причина отказа")
         if not d["close_date"]:
             errors.append("Не состоялась: не указана дата")
-    if st in ("Удалён", "Удален") and stage not in ("Удалён", "Не состоялась", "Заменена"):
-        errors = []
-        hint, level = "Удалено в 1С", "closed"
+    
+    # Новая логика на основе status_1c
+    if st in ("Удален", "Удалён"):
+        hint, level = "Удален в 1С", "closed"
     elif errors:
-        hint, level = "Проверить клиента", "error"
-    elif st in ("Удалён", "Удален") or stage in ("Удалён", "Не состоялась"):
-        hint, level = "Клиент отказался", "closed"
-    elif stage == "Заменена":
-        hint, level = "Обновить клиента", "closed"
-    elif st == "Выдан" or (stage == "Закрыто" and in_stock_ok):
-        hint, level = "Товар выдан", "done"
+        hint, level = "Проверить", "error"
+    elif st == "Выдан":
+        hint, level = "Закрыто", "done"
     elif st == "Резерв" and paid and in_stock_ok:
         hint, level = "Выдать товар", "ready"
+    elif st == "Резерв" and paid and in_stock_val == "Ожидает проверки":
+        hint, level = "Проверь отгрузки", "ready"
     elif st == "Резерв" and paid:
-        hint, level = "Сообщить срок", "paid"
-    elif st == "Резерв" and wd >= 3:
-        hint, level = "Напомнить оплату", "risk"
-    elif st == "Резерв":
-        hint, level = "Довести до оплаты", "warn"
-    elif stage == "Оплата есть" and in_stock_ok:
         hint, level = "Выдать товар", "ready"
-    elif stage == "Оплата есть":
-        hint, level = "Сообщить срок", "paid"
-    elif stage == "Счет отправлен" and wd >= 3:
-        hint, level = "Напомнить оплату", "risk"
-    elif stage == "Счет отправлен":
+    elif st == "Резерв" and wd >= 3 and not paid:
+        hint, level = "Напомнить оплатить", "risk"
+    elif st == "Резерв" and not paid:
         hint, level = "Довести до оплаты", "warn"
     elif stage == "Сервис":
         hint, level = "Связаться с клиентом", "info"
@@ -543,6 +550,7 @@ def derive(d, today=None, user_action_keys=None):
         "plan_contact": plan_contact,
         "plan_color": plan_color,
         "check_status": chk_status,
+        "in_stock": in_stock_val,
     }
 
 

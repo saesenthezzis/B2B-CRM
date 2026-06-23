@@ -103,7 +103,7 @@ function applyManagerZone(save = true) {
 
 /* ---------- очереди ---------- */
 const QUEUES = [
-  { id: 'new', name: 'Новые', f: d => d.check_status === 'Новая' },
+  { id: 'new', name: 'Новые', f: d => d.cur_status === 'Резерв' },
   { id: 'action', name: 'Требует действия', f: d => {
     const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
     const isIssued = d.cur_status === 'Выдан';
@@ -171,10 +171,9 @@ function baseFiltered() {
 function renderQueues(rows) {
   const html = '<div class="radio-inputs">' + QUEUES.map(t => {
     const checked = t.id === queue ? 'checked' : '';
-    const count = rows.filter(t.f).length;
     return `<label class="radio">
               <input type="radio" name="radio-queue" data-q="${t.id}" ${checked}>
-              <span class="name">${t.name} <b class="queue-count">${count}</b></span>
+              <span class="name">${t.name}</span>
             </label>`;
   }).join('') + '</div>';
   $('queues').innerHTML = html;
@@ -193,17 +192,16 @@ const COLS = [
   { id: 'amount', name: 'Сумма' },
   { id: 'in_stock', name: 'Товар' },
   { id: 'plan_contact', name: 'Срок' },
-  { id: 'reason', name: 'Причина' },
   { id: 'notes', name: 'Заметка' },
   { id: 'author', name: 'Автор' },
   { id: 'hist', name: '' },
   { id: '_confirm', name: '' },
 ];
 
-function selectHtml(d, field, options, allowEmpty = true) {
+function selectHtml(d, field, options, allowEmpty = true, disabled = false) {
   const cur = d[field] || '';
   let extra = cur && !options.includes(cur) ? [cur] : [];
-  return `<select data-k="${esc(d.key)}" data-f="${field}">
+  return `<select data-k="${esc(d.key)}" data-f="${field}"${disabled ? ' disabled' : ''}>
     ${allowEmpty ? `<option value=""${cur ? '' : ' selected'}>—</option>` : ''}
     ${options.concat(extra).map(o => `<option${o === cur ? ' selected' : ''}>${esc(o)}</option>`).join('')}
   </select>`;
@@ -238,29 +236,24 @@ function stageCell(d) {
 function rowHtml(d) {
   const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
   const flag = d.flag ? `<span class="flag ${d.flag}">${d.flag === 'NEW' ? 'NEW' : 'UPD'}</span>` : '';
-  const docStatus = `<span class="doc-status ${stClass}">${esc(d.cur_status)}</span>${flag}`;
+  const docStatus = `<span class="doc-status ${stClass}">${esc(d.cur_status)}</span>`;
   const wa = (d.phones || []).map(p => '<a class="wa" target="_blank" href="https://wa.me/' + p + '" title="WhatsApp">💬' + p.slice(-4) + '</a>').join('');
   const dateStr = d.doc_date ? d.doc_date.slice(0, 10).split('-').reverse().join('.') : '';
   const planVal = d.plan_contact ? d.plan_contact.slice(0, 10).split('-').reverse().join('.') : '';
   const planColorClass = d.plan_color === 'green' ? 'plan-green' : d.plan_color === 'yellow' ? 'plan-yellow' : 'plan-red';
-  const reason = d.stage === 'Не состоялась'
-    ? selectHtml(d, 'reject_reason', META.reject_reasons)
-    : d.stage === 'Удалён'
-      ? selectHtml(d, 'delete_reason', META.delete_reasons)
-      : '<span class="cl">—</span>';
   const errTip = d.errors && d.errors.length ? ` title="${esc(d.errors.join('; '))}"` : '';
   const actionMark = d.overdue_contact ? '<span class="late-mark" title="Срок прошел">Просрочено</span>' : '';
+  const inStockDisabled = (d.cur_status === 'Удален' || d.cur_status === 'Удалён' || d.cur_status === 'Выдан');
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
-    <td>${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
-    <td>${esc(d.city || '')}</td>
+    <td>${flag}${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
+    <td>${esc(d.branch || '')}</td>
     <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
-    <td><span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span>${actionMark}</td>
+    <td>${actionMark}<span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span></td>
     <td>${stageCell(d)}</td>
     <td class="sum">${paymentBadge(d)}<span class="amount-text">${money(d.amount)}</span></td>
-    <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено", "Товар есть"], false)}</td>
+    <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено"], false, inStockDisabled)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
-    <td>${reason}</td>
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="Заметка"></td>
     <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
@@ -292,7 +285,7 @@ function render() {
   if (page >= pages) page = pages - 1;
   const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
   $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="14" style="text-align:center;color:#888;padding:22px">Нет записей</td></tr>';
+    pg.map(rowHtml).join('') || '<tr><td colspan="13" style="text-align:center;color:#888;padding:22px">Нет записей</td></tr>';
   bindRowEvents();
   $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
   $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
