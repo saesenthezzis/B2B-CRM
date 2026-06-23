@@ -4,3 +4,4 @@ openpyxl
 libsql-client
 python-dotenv
 gunicorn
+watchdog

@@ -102,7 +102,7 @@ class _DbWrapper:
                 self.client.batch(statements)
     
     def execute_batch(self, statements_list):
-        """Отправляет список (sql, params) батчами по 500 — минимум HTTP round-trips."""
+        """Отправляет список (sql, params) батчами по 1000 — минимум HTTP round-trips."""
         if not statements_list:
             return
         if self.is_sqlite:
@@ -113,7 +113,7 @@ class _DbWrapper:
                     self.con.execute(sql)
             self.con.commit()
         else:
-            batch_size = 500
+            batch_size = 1000
             for i in range(0, len(statements_list), batch_size):
                 chunk = statements_list[i : i + batch_size]
                 parts = []

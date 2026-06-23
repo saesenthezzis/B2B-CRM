@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
 """Автосинхронизация 1С → Turso.
 
-Скрипт проверяет файл выгрузки из 1С (CSV) в сетевой папке,
-и если файл обновился — импортирует данные в облачную БД Turso.
+Скрипт мониторит файл выгрузки из 1С (CSV) в сетевой папке в реальном времени,
+и при появлении обновленного файла — импортирует данные в облачную БД Turso.
 
-Запускается через Windows Task Scheduler каждый час (9:00 — 20:00).
+Использует watchdog для реального мониторинга файловой системы.
+Запускается как Windows Service для непрерывной работы.
 Использование:  python sync_daemon.py
 """
 import os
 import sys
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 from dotenv import load_dotenv
 
@@ -23,7 +27,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # ─── Настройки ───────────────────────────────────────────────────────────────
 NETWORK_PATH = os.getenv(
     "SYNC_NETWORK_PATH",
-    r"\\kz-srv1.lan.dns-shop.kz\kazakhstan\Администрация\Отдел Альтернативных продаж"
+    r"\\kz-srv1.lan.dns-shop.kz\kazakhstan\Отдел функционального развития\B2B\РМКО"
 )
 FILE_NAME = os.getenv("SYNC_FILE_NAME", "РМКО_выгрузка.csv")
 CSV_ENCODING = os.getenv("SYNC_CSV_ENCODING", "utf-8")
@@ -34,6 +38,13 @@ CSV_SEPARATOR = _raw_sep.encode().decode("unicode_escape") if _raw_sep else ";"
 # Файл для отслеживания последней синхронизации
 STATE_FILE = os.path.join(BASE_DIR, ".sync_state.json")
 LOG_FILE = os.path.join(BASE_DIR, "sync.log")
+
+# Задержка перед синхронизацией (сек) после обнаружения изменения файла
+# Нужно чтобы файл полностью записался 1С
+SYNC_DELAY = 5
+
+# Размер батча для импорта в Turso
+BATCH_SIZE = 1000
 
 # ─── Логирование ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -88,6 +99,47 @@ def find_export_file():
     return None
 
 
+def validate_csv_structure(file_path):
+    """Валидация структуры CSV файла перед импортом.
+    
+    Проверяет:
+    - Файл существует и доступен для чтения
+    - Файл не пустой
+    - Есть обязательные колонки
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    try:
+        import csv
+        with open(file_path, 'r', encoding=CSV_ENCODING) as f:
+            reader = csv.reader(f, delimiter=CSV_SEPARATOR)
+            header = next(reader, None)
+            
+            if not header:
+                return False, "Файл пуст или не содержит заголовков"
+            
+            # Проверка обязательных колонок
+            required_cols = ["НомерДокумента", "ДатаСоздания"]
+            header_clean = [str(c).strip().lstrip('\ufeff') for c in header]
+            missing = [col for col in required_cols if col not in header_clean]
+            
+            if missing:
+                return False, f"Отсутствуют обязательные колонки: {', '.join(missing)}"
+            
+            # Проверяем что есть хотя бы одна строка данных
+            first_row = next(reader, None)
+            if not first_row:
+                return False, "Файл не содержит данных"
+            
+            return True, None
+            
+    except UnicodeDecodeError as e:
+        return False, f"Ошибка кодировки: {e}"
+    except Exception as e:
+        return False, f"Ошибка валидации: {e}"
+
+
 def file_has_changed(file_path, state):
     """Проверить, изменился ли файл с момента последней синхронизации."""
     try:
@@ -110,8 +162,9 @@ def run_sync():
 
     1. Находит файл выгрузки в сетевой папке
     2. Проверяет, обновился ли он
-    3. Если да — импортирует в Turso через core.import_csv()
-    4. Сохраняет состояние
+    3. Валидирует структуру CSV
+    4. Если да — импортирует в Turso через core.import_csv()
+    5. Сохраняет состояние
     """
     log.info("=" * 60)
     log.info("Запуск синхронизации")
@@ -143,10 +196,19 @@ def run_sync():
     log.info("Файл обновлён: размер=%d байт, время=%s",
              fsize, datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S"))
 
-    # 4. Импортируем данные в Turso
+    # 4. Валидация структуры CSV
+    log.info("Валидация структуры CSV...")
+    is_valid, error_msg = validate_csv_structure(file_path)
+    if not is_valid:
+        log.error("Валидация не пройдена: %s", error_msg)
+        log.error("Импорт отменён для защиты базы данных от некорректных данных.")
+        return False
+    log.info("Валидация пройдена успешно.")
+
+    # 5. Импортируем данные в Turso
     try:
         import core
-        log.info("Запускаю импорт CSV → Turso...")
+        log.info("Запускаю импорт CSV → Turso (batch size=%d)...", BATCH_SIZE)
         stats = core.import_csv(
             csv_path=file_path,
             encoding=CSV_ENCODING,
@@ -159,9 +221,10 @@ def run_sync():
         return False
     except Exception as e:
         log.error("Ошибка при импорте: %s", e, exc_info=True)
+        log.error("Импорт не завершён. База данных осталась в консистентном состоянии.")
         return False
 
-    # 5. Сохраняем состояние
+    # 6. Сохраняем состояние
     state.update({
         "last_mtime": mtime,
         "last_fsize": fsize,
@@ -174,16 +237,120 @@ def run_sync():
     return True
 
 
+# ─── Watchdog обработчик событий ──────────────────────────────────────────────
+
+class CSVFileHandler(FileSystemEventHandler):
+    """Обработчик событий файловой системы для мониторинга CSV файла."""
+    
+    def __init__(self):
+        self.last_event_time = 0
+        self.pending_sync = False
+    
+    def on_modified(self, event):
+        """При изменении файла — планируем синхронизацию с задержкой."""
+        if event.is_directory:
+            return
+        
+        file_name = os.path.basename(event.src_path)
+        # Проверяем что это именно наш файл
+        if file_name == FILE_NAME or file_name.startswith(FILE_NAME.replace('.csv', '')):
+            current_time = time.time()
+            self.last_event_time = current_time
+            self.pending_sync = True
+            log.info("Обнаружено изменение файла: %s", event.src_path)
+    
+    def on_created(self, event):
+        """При создании файла — планируем синхронизацию с задержкой."""
+        if event.is_directory:
+            return
+        
+        file_name = os.path.basename(event.src_path)
+        if file_name == FILE_NAME or file_name.startswith(FILE_NAME.replace('.csv', '')):
+            current_time = time.time()
+            self.last_event_time = current_time
+            self.pending_sync = True
+            log.info("Обнаружен новый файл: %s", event.src_path)
+
+
+def run_continuous_monitor():
+    """Непрерывный мониторинг папки с помощью watchdog."""
+    log.info("=" * 60)
+    log.info("Запуск непрерывного мониторинга")
+    log.info("Сетевая папка: %s", NETWORK_PATH)
+    log.info("Имя файла: %s", FILE_NAME)
+    log.info("Задержка перед синхронизацией: %d сек", SYNC_DELAY)
+    log.info("Нажмите Ctrl+C для остановки")
+    
+    # Проверяем доступность папки перед стартом
+    if not os.path.isdir(NETWORK_PATH):
+        log.error("Сетевая папка недоступна: %s", NETWORK_PATH)
+        return False
+    
+    event_handler = CSVFileHandler()
+    observer = Observer()
+    observer.schedule(event_handler, NETWORK_PATH, recursive=False)
+    
+    try:
+        observer.start()
+        log.info("Мониторинг запущен...")
+        
+        while True:
+            time.sleep(1)
+            
+            # Проверяем нужно ли выполнить синхронизацию
+            if event_handler.pending_sync:
+                time_since_last_event = time.time() - event_handler.last_event_time
+                
+                # Ждем пока файл перестанет изменяться (SYNC_DELAY)
+                if time_since_last_event >= SYNC_DELAY:
+                    event_handler.pending_sync = False
+                    log.info("Выполняем синхронизацию...")
+                    run_sync()
+                    log.info("Ожидание следующих изменений...")
+                    
+    except KeyboardInterrupt:
+        log.info("Получен сигнал остановки...")
+        observer.stop()
+    except Exception as e:
+        log.critical("Критическая ошибка в мониторе: %s", e, exc_info=True)
+        observer.stop()
+        return False
+    
+    observer.join()
+    log.info("Мониторинг остановлен.")
+    return True
+
+
 # ─── Точка входа ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    try:
-        success = run_sync()
-        sys.exit(0 if success else 1)
-    except KeyboardInterrupt:
-        log.info("Прервано пользователем.")
-        sys.exit(0)
-    except Exception as e:
-        log.critical("Критическая ошибка: %s", e, exc_info=True)
-        sys.exit(2)
+    
+    # Режим работы: one-shot (однократная синхронизация) или monitor (непрерывный)
+    mode = sys.argv[1] if len(sys.argv) > 1 else "monitor"
+    
+    if mode == "once":
+        # Однократная синхронизация (для тестирования или ручного запуска)
+        try:
+            success = run_sync()
+            sys.exit(0 if success else 1)
+        except KeyboardInterrupt:
+            log.info("Прервано пользователем.")
+            sys.exit(0)
+        except Exception as e:
+            log.critical("Критическая ошибка: %s", e, exc_info=True)
+            sys.exit(2)
+    elif mode == "monitor":
+        # Непрерывный мониторинг (основной режим)
+        try:
+            success = run_continuous_monitor()
+            sys.exit(0 if success else 1)
+        except Exception as e:
+            log.critical("Критическая ошибка: %s", e, exc_info=True)
+            sys.exit(2)
+    else:
+        print(f"Неизвестный режим: {mode}")
+        print("Использование:")
+        print("  python sync_daemon.py once   - однократная синхронизация")
+        print("  python sync_daemon.py monitor - непрерывный мониторинг (по умолчанию)")
+        sys.exit(1)
