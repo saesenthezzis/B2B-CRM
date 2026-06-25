@@ -1,0 +1,52 @@
+2026-06-23T14:44:20.217354524Z [inf]  Starting Container
+2026-06-23T14:44:21.122643890Z [err]  [2026-06-23 14:44:20 +0000] [1] [INFO] Starting gunicorn 26.0.0
+2026-06-23T14:44:21.122653277Z [err]  [2026-06-23 14:44:20 +0000] [1] [INFO] Listening at: http://0.0.0.0:8000 (1)
+2026-06-23T14:44:21.122667946Z [err]  [2026-06-23 14:44:20 +0000] [1] [INFO] Using worker: sync
+2026-06-23T14:44:21.122675158Z [err]  [2026-06-23 14:44:20 +0000] [2] [INFO] Booting worker with pid: 2
+2026-06-23T14:44:21.122681024Z [err]  [2026-06-23 14:44:20 +0000] [3] [INFO] Booting worker with pid: 3
+2026-06-23T14:44:21.122687285Z [err]  [2026-06-23 14:44:20 +0000] [1] [INFO] Control socket listening at /root/.gunicorn/gunicorn.ctl
+2026-06-23T14:45:32.971868941Z [err]      return self.wsgi_app(environ, start_response)
+2026-06-23T14:45:32.971870353Z [err]      return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+2026-06-23T14:45:32.971887832Z [err]             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-23T14:45:32.971896577Z [err]    File "/app/.venv/lib/python3.13/site-packages/flask/app.py", line 1511, in wsgi_app
+2026-06-23T14:45:32.971902814Z [err]      response = self.full_dispatch_request()
+2026-06-23T14:45:32.971930452Z [err]      self.handle_request(listener, req, client, addr)
+2026-06-23T14:45:32.971939535Z [err]    File "/app/.venv/lib/python3.13/site-packages/flask/app.py", line 917, in full_dispatch_request
+2026-06-23T14:45:32.971945054Z [err]      ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-23T14:45:32.971953487Z [err]      rv = self.dispatch_request()
+2026-06-23T14:45:32.971954773Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+2026-06-23T14:45:32.971954840Z [err]    File "/app/.venv/lib/python3.13/site-packages/gunicorn/workers/sync.py", line 184, in handle_request
+2026-06-23T14:45:32.971962185Z [err]    File "/app/.venv/lib/python3.13/site-packages/flask/app.py", line 902, in dispatch_request
+2026-06-23T14:45:32.971965927Z [err]      respiter = self.wsgi(environ, resp.start_response)
+2026-06-23T14:45:32.971972883Z [err]    File "/app/.venv/lib/python3.13/site-packages/flask/app.py", line 1536, in __call__
+2026-06-23T14:45:32.971990523Z [err]  [2026-06-23 14:45:23 +0000] [1] [CRITICAL] WORKER TIMEOUT (pid:3)
+2026-06-23T14:45:32.972052224Z [err]  [2026-06-23 14:45:23 +0000] [3] [ERROR] Error handling request GET /api/deals
+2026-06-23T14:45:32.972061188Z [err]  Traceback (most recent call last):
+2026-06-23T14:45:32.972068488Z [err]    File "/app/.venv/lib/python3.13/site-packages/gunicorn/workers/sync.py", line 141, in handle
+2026-06-23T14:45:33.967201655Z [err]      waiter.acquire()
+2026-06-23T14:45:33.967212794Z [err]      ~~~~~~~~~~~~~~^^
+2026-06-23T14:45:33.967219677Z [err]    File "/app/.venv/lib/python3.13/site-packages/gunicorn/workers/base.py", line 198, in handle_abort
+2026-06-23T14:45:33.967234873Z [err]    File "/app/app.py", line 35, in decorated_function
+2026-06-23T14:45:33.967240853Z [err]      return f(*args, **kwargs)
+2026-06-23T14:45:33.967246542Z [err]    File "/app/app.py", line 69, in deals
+2026-06-23T14:45:33.967308009Z [err]                                                 ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-23T14:45:33.967308979Z [err]      return self._executor.submit_coro(self._client.execute(stmt, args))
+2026-06-23T14:45:33.967317558Z [err]      result = self.client.execute(sql, args)
+2026-06-23T14:45:33.967317933Z [err]    File "/app/core.py", line 93, in execute
+2026-06-23T14:45:33.967329895Z [err]    File "/app/.venv/lib/python3.13/site-packages/libsql_client/sync.py", line 46, in execute
+2026-06-23T14:45:33.967332409Z [err]             ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-23T14:45:33.967336637Z [err]      user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
+2026-06-23T14:45:33.967348095Z [err]    File "/app/.venv/lib/python3.13/site-packages/libsql_client/sync.py", line 181, in submit_coro
+2026-06-23T14:45:33.967357623Z [err]      return fut.result()
+2026-06-23T14:45:33.967367615Z [err]             ~~~~~~~~~~^^
+2026-06-23T14:45:33.967377276Z [err]    File "/mise/installs/python/3.13.13/lib/python3.13/concurrent/futures/_base.py", line 451, in result
+2026-06-23T14:45:33.967388448Z [err]      self._condition.wait(timeout)
+2026-06-23T14:45:33.967398127Z [err]      ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+2026-06-23T14:45:33.967405895Z [err]    File "/mise/installs/python/3.13.13/lib/python3.13/threading.py", line 359, in wait
+2026-06-23T14:45:34.639567620Z [err]      sys.exit(1)
+2026-06-23T14:45:34.639572896Z [err]      ~~~~~~~~^^^
+2026-06-23T14:45:34.639578325Z [err]  SystemExit: 1
+2026-06-23T14:45:34.639584137Z [err]  [2026-06-23 14:45:23 +0000] [3] [INFO] Worker exiting (pid: 3)
+2026-06-23T14:45:34.639589727Z [err]  [2026-06-23 14:45:24 +0000] [1] [ERROR] Worker (pid:3) was sent SIGKILL! Perhaps out of memory?
+2026-06-23T14:45:34.639594577Z [err]  [2026-06-23 14:45:24 +0000] [15] [INFO] Booting worker with pid: 15
+2026-06-23T14:45:34.639599599Z [err]  [2026-06-23 14:45:24 +0000] [1] [INFO] Control socket listening at /root/.gunicorn/gunicorn.ctl

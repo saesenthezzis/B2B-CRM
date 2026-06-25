@@ -1,13 +1,13 @@
 @echo off
 echo ============================================
-echo   Install 1C - Turso Sync Monitor
+echo   Install RMKO Sync Schedule Task
 echo ============================================
 echo.
 
 set PYTHON_PATH=python
 set SCRIPT_DIR=%~dp0
 set SCRIPT_PATH=%SCRIPT_DIR%sync_daemon.py
-set TASK_NAME=RMKO_AutoSync_Monitor
+set TASK_NAME=RMKO_AutoSync_Schedule
 
 echo Checking Python...
 %PYTHON_PATH% --version
@@ -35,23 +35,31 @@ if errorlevel 1 (
 )
 echo.
 
-echo Removing old task if exists...
+echo Removing old tasks if exist...
 schtasks /query /tn "%TASK_NAME%" >nul 2>&1
 if not errorlevel 1 (
     schtasks /delete /tn "%TASK_NAME%" /f
 )
+schtasks /query /tn "RMKO_AutoSync_Monitor" >nul 2>&1
+if not errorlevel 1 (
+    schtasks /delete /tn "RMKO_AutoSync_Monitor" /f
+)
 
-echo Creating Windows Task Scheduler job...
+echo Creating scheduled task...
 echo   Task name:      %TASK_NAME%
-echo   Mode:           Continuous monitoring
+echo   Mode:           Every 30 minutes
 echo   Script:    %SCRIPT_PATH%
-echo   Trigger:        User logon
+echo   Trigger:        At system startup + repeat every 30 min
 echo.
 
 schtasks /create ^
     /tn "%TASK_NAME%" ^
-    /tr "\"%PYTHON_PATH%\" \"%SCRIPT_PATH%\" monitor" ^
-    /sc onlogon ^
+    /tr "\"%PYTHON_PATH%\" \"%SCRIPT_PATH%\" once" ^
+    /sc daily ^
+    /st 00:00 ^
+    /mo 1 ^
+    /ri 30 ^
+    /du 24:00 ^
     /ru "%USERNAME%" ^
     /rl highest ^
     /f
@@ -66,10 +74,12 @@ if errorlevel 1 (
 
 echo.
 echo ============================================
-echo   [OK] Monitor installed successfully!
+echo   [OK] Schedule task installed successfully!
 echo ============================================
 echo.
-echo Task "%TASK_NAME%" will run automatically at user logon.
+echo Task "%TASK_NAME%" will run:
+echo   - At system startup
+echo   - Then every 30 minutes (24/7)
 echo.
 echo To manage task open Task Scheduler (taskschd.msc)
 echo and find task "%TASK_NAME%".
