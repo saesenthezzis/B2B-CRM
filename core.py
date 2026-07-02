@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS allowed_emails (
 );
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
+CREATE INDEX IF NOT EXISTS ix_hist_user ON history(user);
 """
 
 # Миграции для добавления новых колонок в существующую БД

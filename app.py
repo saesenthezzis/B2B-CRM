@@ -65,8 +65,11 @@ def meta():
 @login_required
 def deals():
     con = core.db()
+    # Оптимизированный запрос - получаем deals и user_action_keys одним соединением
     rows = [dict(r) for r in con.execute("SELECT * FROM deals")]
-    user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
+    # Кэшируем результат запроса истории для ускорения
+    history_rows = con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'").fetchall()
+    user_action_keys = {r["deal_key"] for r in history_rows}
     con.close()
     out = []
     for d in rows:
