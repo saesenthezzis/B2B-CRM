@@ -491,4 +491,138 @@ async function renderBoss() {
   }
 };
 
+/* ---------- переключение вкладок ---------- */
+let currentMode = 'mgr';
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('act'));
+  document.querySelector(`.mode-tab[data-m="${mode}"]`).classList.add('act');
+  
+  document.querySelectorAll('#v-mgr, #v-analytics, #v-boss, #v-settings').forEach(s => s.classList.add('hidden'));
+  document.getElementById('v-' + mode).classList.remove('hidden');
+  
+  if (mode === 'mgr') {
+    render();
+  } else if (mode === 'boss') {
+    renderBoss();
+  } else if (mode === 'analytics') {
+    if (typeof initDashboard === 'function') initDashboard();
+  } else if (mode === 'settings') {
+    renderSettings();
+  }
+}
+
+document.querySelectorAll('.mode-tab').forEach(tab => {
+  tab.onclick = () => switchMode(tab.dataset.m);
+});
+
+/* ---------- обработчики фильтров ---------- */
+$('user').onchange = () => {
+  applyManagerZone(true);
+  page = 0;
+  debouncedRender();
+};
+
+$('myCity').onchange = () => {
+  localStorage.setItem('myCity', $('myCity').value);
+  page = 0;
+  debouncedRender();
+};
+
+$('fPeriod').onchange = () => {
+  localStorage.setItem('fPeriod', $('fPeriod').value);
+  updateFilterVisual($('fPeriod'));
+  page = 0;
+  debouncedRender();
+};
+
+$('fStatus').onchange = () => {
+  localStorage.setItem('fStatus', $('fStatus').value);
+  updateFilterVisual($('fStatus'));
+  page = 0;
+  debouncedRender();
+};
+
+$('fStage').onchange = () => {
+  localStorage.setItem('fStage', $('fStage').value);
+  updateFilterVisual($('fStage'));
+  page = 0;
+  debouncedRender();
+};
+
+$('fPayment').onchange = () => {
+  localStorage.setItem('fPayment', $('fPayment').value);
+  updateFilterVisual($('fPayment'));
+  page = 0;
+  debouncedRender();
+};
+
+$('fMine').onchange = () => {
+  page = 0;
+  debouncedRender();
+};
+
+$('fFrom').onchange = () => { page = 0; debouncedRender(); };
+$('fTo').onchange = () => { page = 0; debouncedRender(); };
+
+$('q').oninput = () => {
+  page = 0;
+  debouncedRender();
+};
+
+/* ---------- пагинация ---------- */
+$('prev').onclick = () => {
+  if (page > 0) { page--; render(); }
+};
+
+$('next').onclick = () => {
+  page++;
+  render();
+};
+
+/* ---------- импорт и выход ---------- */
+$('btnImport').onclick = async () => {
+  if (!confirm('Обновить данные из 1С? Это может занять несколько минут.')) return;
+  $('btnImport').disabled = true;
+  $('btnImport').textContent = 'Загрузка...';
+  try {
+    const r = await fetch('/api/import', { method: 'POST' });
+    const data = await r.json();
+    if (r.ok) {
+      toast(`Импорт завершен: ${data.new || 0} новых, ${data.updated || 0} обновлено`);
+      loadAll();
+    } else {
+      toast('Ошибка импорта: ' + (data.error || r.status), true);
+    }
+  } catch (e) {
+    toast('Ошибка импорта: ' + e.message, true);
+  } finally {
+    $('btnImport').disabled = false;
+    $('btnImport').textContent = '⟳ Обновить из 1С';
+  }
+};
+
+$('btnLogout').onclick = async () => {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    location.href = '/login';
+  } catch (e) {
+    toast('Ошибка выхода', true);
+  }
+};
+
+/* ---------- настройки ---------- */
+async function renderSettings() {
+  const tbody = $('tblSpec').querySelector('tbody');
+  tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;padding:22px"><div class="loader-spinner"></div></td></tr>';
+  try {
+    const specialists = await fetch('/api/meta').then(r => r.json()).then(m => m.specialists || []);
+    tbody.innerHTML = specialists.map(s => 
+      `<tr><td>${esc(s.name)}</td><td>${esc(s.city)}</td></tr>`
+    ).join('') || '<tr><td colspan="2" style="text-align:center;color:#888;padding:22px">Нет специалистов</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:red;padding:22px">Ошибка загрузки</td></tr>';
+  }
+}
+
 loadAll();

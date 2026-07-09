@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 try:
     import libsql_client
     _HAS_LIBSQL = True
@@ -311,12 +312,18 @@ _meta_cache = {"data": None, "ts": 0}
 _cache_lock = threading.Lock()
 META_TTL = 300  # 5 минут
 
+# ---------------- кэш specialists ----------------
+_specialists_cache = {"data": None, "ts": 0}
+SPECIALISTS_TTL = 300  # 5 минут
+
 
 def invalidate_meta_cache():
-    """Сбросить кэш meta (вызывать после импорта). Потокобезопасно."""
+    """Сбросить кэш meta и specialists (вызывать после импорта). Потокобезопасно."""
     with _cache_lock:
         _meta_cache["data"] = None
         _meta_cache["ts"] = 0
+        _specialists_cache["data"] = None
+        _specialists_cache["ts"] = 0
 
 
 def db():
@@ -734,12 +741,25 @@ def recompute_deal(con, key):
 
 def load_specialists(con=None):
     """Загрузить специалистов. Принимает существующее соединение чтобы не создавать новое."""
+    now_ts = time.time()
+    # Потокобезопасное чтение кэша
+    with _cache_lock:
+        cached = _specialists_cache
+        if cached["data"] and now_ts - cached["ts"] < SPECIALISTS_TTL:
+            return cached["data"]
+    
     own_con = con is None
     if own_con:
         con = db()
     rows = [dict(r) for r in con.execute("SELECT id, name, city FROM specialists ORDER BY name")]
     if own_con and os.getenv("TURSO_DATABASE_URL", "").startswith("file:"):
         con.close()
+    
+    # Обновляем кэш
+    with _cache_lock:
+        _specialists_cache["data"] = rows
+        _specialists_cache["ts"] = now_ts
+    
     return rows
 
 
@@ -1178,18 +1198,13 @@ def build_filters_sql(args, zone_cities=None):
         # Новые = Резерв (все сделки в статусе Резерв)
         where.append("computed_status = 'Резерв'")
     elif queue == "action":
-        # Требует действия = Резерв (неоплаченные + оплаченные) + Удалён без причины
-        # Т.е. всё кроме done и closed — сделки требующие внимания менеджера
-        where.append("computed_level IN ('risk', 'warn', 'error', 'ready', 'info')")
-        where.append("computed_status != 'Выдан'")
+        # Требует действия = всё кроме done и closed — сделки требующие внимания менеджера
+        where.append("computed_level NOT IN ('done', 'closed')")
     elif queue == "done":
         # Закрытые = Выдан
         where.append("computed_status = 'Выдан'")
     elif queue == "lost":
-        # Без продажи = Удалённые с причиной + закрытые не-done
-        where.append("(" 
-            "(computed_status IN ('Удален', 'Удалён') AND notes IS NOT NULL AND notes != '') OR "
-            "(computed_level = 'closed' AND computed_status NOT IN ('Выдан'))"
-        ")")
+        # Без продажи = Удалённые + закрытые не-done
+        where.append("computed_status IN ('Удален', 'Удалён')")
 
     return " AND ".join(where), params
