@@ -239,8 +239,8 @@ CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key);
 CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage);
 CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at);
-CREATE INDEX IF NOT EXISTS ix_deals_status1c ON deals(status_1c);
 CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date);
+CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, stage, created_at DESC);
 """
 
 # Миграции для добавления новых колонок в существующую БД
@@ -256,11 +256,10 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key)",
     "CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage)",
     "CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_deals_status1c ON deals(status_1c)",
     "CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date)",
-    "CREATE INDEX IF NOT EXISTS ix_deals_computed_status ON deals(computed_status)",
     "CREATE INDEX IF NOT EXISTS ix_deals_computed_level ON deals(computed_level)",
     "CREATE INDEX IF NOT EXISTS ix_deals_status_level ON deals(computed_status, computed_level)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, stage, created_at DESC)",
 ]
 
 # Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
