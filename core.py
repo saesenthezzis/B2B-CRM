@@ -61,6 +61,11 @@ class _DummyCursor:
 
 def _split_sql_script(sql_script):
     return [stmt.strip() for stmt in sql_script.split(";") if stmt.strip()]
+def _filter_params(sql, params):
+    if not params or not isinstance(params, dict):
+        return params
+    used = set(re.findall(r":([a-zA-Z_][a-zA-Z0-9_]*)", sql))
+    return {k: v for k, v in params.items() if k in used}
 
 
 class _DbWrapper:
@@ -93,7 +98,8 @@ class _DbWrapper:
         else:
             try:
                 if isinstance(params, dict):
-                    stmt = libsql_client.Statement(sql, params)
+                    safe_params = _filter_params(sql, params)
+                    stmt = libsql_client.Statement(sql, safe_params)
                     result = self.client.execute(stmt)
                 else:
                     args = params if params is not None else []
@@ -133,7 +139,8 @@ class _DbWrapper:
                     if params is None:
                         parts.append(sql)
                     elif isinstance(params, dict):
-                        parts.append(libsql_client.Statement(sql, params))
+                        safe_params = _filter_params(sql, params)
+                        parts.append(libsql_client.Statement(sql, safe_params))
                     else:
                         parts.append(libsql_client.Statement(sql, params))
                 self.client.batch(parts)
