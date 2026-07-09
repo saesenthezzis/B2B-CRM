@@ -14,6 +14,7 @@
 import os
 import re
 import sqlite3
+import threading
 try:
     import libsql_client
     _HAS_LIBSQL = True
@@ -269,16 +270,19 @@ def _run_migrations(con):
 
 _schema_applied = False
 _turso_singleton = None  # singleton для Turso — переиспользуем HTTPS-клиент
+_db_lock = threading.Lock()  # потокобезопасность singleton
 
 # ---------------- кэш meta ----------------
 _meta_cache = {"data": None, "ts": 0}
+_cache_lock = threading.Lock()
 META_TTL = 300  # 5 минут
 
 
 def invalidate_meta_cache():
-    """Сбросить кэш meta (вызывать после импорта)."""
-    _meta_cache["data"] = None
-    _meta_cache["ts"] = 0
+    """Сбросить кэш meta (вызывать после импорта). Потокобезопасно."""
+    with _cache_lock:
+        _meta_cache["data"] = None
+        _meta_cache["ts"] = 0
 
 
 def db():
@@ -292,9 +296,10 @@ def db():
         con = _DbWrapper(url, auth_token)
     else:
         # Turso — переиспользуем singleton (TLS handshake один раз)
-        if _turso_singleton is None:
-            _turso_singleton = _DbWrapper(url, auth_token)
-            _turso_singleton._is_singleton = True
+        with _db_lock:
+            if _turso_singleton is None:
+                _turso_singleton = _DbWrapper(url, auth_token)
+                _turso_singleton._is_singleton = True
         con = _turso_singleton
 
     if not _schema_applied:

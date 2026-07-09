@@ -46,10 +46,14 @@ def index():
 @login_required
 def meta():
     now_ts = time.time()
-    cached = core._meta_cache
-    if cached["data"] and now_ts - cached["ts"] < core.META_TTL:
-        result = dict(cached["data"])
-    else:
+    # Потокобезопасное чтение кэша
+    with core._cache_lock:
+        cached = core._meta_cache
+        if cached["data"] and now_ts - cached["ts"] < core.META_TTL:
+            result = dict(cached["data"])
+        else:
+            result = None
+    if result is None:
         con = core.db()
         cities_rows = con.execute("SELECT DISTINCT city FROM deals WHERE city IS NOT NULL")
         cities = sorted({r["city"] for r in cities_rows})
@@ -63,8 +67,9 @@ def meta():
             "check_statuses": core.CHECK_STATUSES, "goods_check": core.GOODS_CHECK,
             "last_import": li["v"] if li else None,
         }
-        cached["data"] = result
-        cached["ts"] = now_ts
+        with core._cache_lock:
+            cached["data"] = result
+            cached["ts"] = now_ts
         result = dict(result)
     # Per-request данные (не кэшируются)
     result["user"] = {"name": session.get("username"), "needs_password_change": session.get("needs_password_change")}
