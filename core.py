@@ -64,6 +64,7 @@ def _split_sql_script(sql_script):
 
 class _DbWrapper:
     def __init__(self, url, auth_token):
+        self._is_singleton = False  # singleton нельзя закрывать
         if url.startswith("file:"):
             self.con = sqlite3.connect(url.replace("file:", ""))
             self.con.row_factory = sqlite3.Row
@@ -131,6 +132,8 @@ class _DbWrapper:
             self.con.commit()
             
     def close(self):
+        if self._is_singleton:
+            return  # singleton переиспользуется, не закрываем
         if self.is_sqlite:
             self.con.close()
         else:
@@ -213,6 +216,10 @@ CREATE TABLE IF NOT EXISTS allowed_emails (
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key);
+CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage);
+CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at);
+CREATE INDEX IF NOT EXISTS ix_deals_status1c ON deals(status_1c);
+CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date);
 """
 
 # Миграции для добавления новых колонок в существующую БД
@@ -224,6 +231,10 @@ _MIGRATIONS = [
     "ALTER TABLE deals ADD COLUMN has_payment INTEGER DEFAULT 0",
     "ALTER TABLE deals ADD COLUMN invoice_basis TEXT",
     "CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_status1c ON deals(status_1c)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date)",
 ]
 
 # Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
@@ -257,13 +268,35 @@ def _run_migrations(con):
 
 
 _schema_applied = False
+_turso_singleton = None  # singleton для Turso — переиспользуем HTTPS-клиент
+
+# ---------------- кэш meta ----------------
+_meta_cache = {"data": None, "ts": 0}
+META_TTL = 300  # 5 минут
+
+
+def invalidate_meta_cache():
+    """Сбросить кэш meta (вызывать после импорта)."""
+    _meta_cache["data"] = None
+    _meta_cache["ts"] = 0
 
 
 def db():
-    global _schema_applied
+    """Получить соединение к БД. Для Turso переиспользует singleton-клиент."""
+    global _schema_applied, _turso_singleton
     url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
     auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
-    con = _DbWrapper(url, auth_token)
+
+    if url.startswith("file:") or url.startswith("/"):
+        # Локальный SQLite — каждый раз новое соединение (дёшево)
+        con = _DbWrapper(url, auth_token)
+    else:
+        # Turso — переиспользуем singleton (TLS handshake один раз)
+        if _turso_singleton is None:
+            _turso_singleton = _DbWrapper(url, auth_token)
+            _turso_singleton._is_singleton = True
+        con = _turso_singleton
+
     if not _schema_applied:
         con.executescript(SCHEMA)
         _run_migrations(con)
@@ -354,7 +387,7 @@ def opt_bool(v):
 
 
 def workdays_between(d_from, d_to):
-    """Рабочие дни (без сб/вс) между датами, минимум 0."""
+    """Рабочие дни (без сб/вс) между датами — формула O(1)."""
     if not d_from:
         return 0
     try:
@@ -364,15 +397,19 @@ def workdays_between(d_from, d_to):
     b = d_to
     if a >= b:
         return 0
-    days, cur = 0, a
-    while cur < b:
-        cur += timedelta(days=1)
-        if cur.weekday() < 5:
-            days += 1
-    return days
+    total_days = (b - a).days
+    full_weeks = total_days // 7
+    remainder = total_days % 7
+    workdays = full_weeks * 5
+    day_of_week = a.weekday()
+    for i in range(1, remainder + 1):
+        if (day_of_week + i) % 7 < 5:
+            workdays += 1
+    return workdays
 
 
 def add_workdays(d_from, days):
+    """Прибавить N рабочих дней к дате (days всегда мал — макс. 2–3 итерации)."""
     if not d_from:
         return None
     try:
@@ -561,10 +598,14 @@ def derive(d, today=None, user_action_keys=None):
 
 # ---------------- зоны ответственности ----------------
 
-def load_specialists():
-    con = db()
+def load_specialists(con=None):
+    """Загрузить специалистов. Принимает существующее соединение чтобы не создавать новое."""
+    own_con = con is None
+    if own_con:
+        con = db()
     rows = [dict(r) for r in con.execute("SELECT id, name, city FROM specialists ORDER BY name")]
-    con.close()
+    if own_con and os.getenv("TURSO_DATABASE_URL", "").startswith("file:"):
+        con.close()
     return rows
 
 
@@ -795,7 +836,7 @@ def import_xlsx(xlsx_path=None, first=False):
         _process_import_df(df, con, existing, stats, now, first, seen)
 
     _finalize_import(con, now)
-    con.close()
+    invalidate_meta_cache()
     return stats
 
 
@@ -847,7 +888,7 @@ def import_csv(csv_path, encoding='utf-8', separator=';', first=False):
     _process_import_df(df, con, existing, stats, now, first, seen)
 
     _finalize_import(con, now)
-    con.close()
+    invalidate_meta_cache()
     return stats
 
 

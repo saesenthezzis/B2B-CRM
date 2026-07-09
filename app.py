@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 import random
 import string
@@ -44,21 +45,31 @@ def index():
 @app.get("/api/meta")
 @login_required
 def meta():
-    con = core.db()
-    deals = [dict(r) for r in con.execute("SELECT DISTINCT city FROM deals")]
-    li = con.execute("SELECT v FROM meta WHERE k='last_import'").fetchone()
-    con.close()
-    cities = sorted({d["city"] for d in deals if d["city"]})
-    return jsonify({
-        "user": {"name": session.get("username"), "needs_password_change": session.get("needs_password_change")},
-        "cities": cities,
-        "specialists": core.load_specialists(),
-        "stages": core.STAGES, "next_steps": core.NEXT_STEPS,
-        "reject_reasons": core.REJECT_REASONS, "delete_reasons": core.DELETE_REASONS,
-        "check_statuses": core.CHECK_STATUSES, "goods_check": core.GOODS_CHECK,
-        "last_import": li["v"] if li else None,
-        "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
-    })
+    now_ts = time.time()
+    cached = core._meta_cache
+    if cached["data"] and now_ts - cached["ts"] < core.META_TTL:
+        result = dict(cached["data"])
+    else:
+        con = core.db()
+        cities_rows = con.execute("SELECT DISTINCT city FROM deals WHERE city IS NOT NULL")
+        cities = sorted({r["city"] for r in cities_rows})
+        li = con.execute("SELECT v FROM meta WHERE k='last_import'").fetchone()
+        specialists = core.load_specialists(con)
+        result = {
+            "cities": cities,
+            "specialists": specialists,
+            "stages": core.STAGES, "next_steps": core.NEXT_STEPS,
+            "reject_reasons": core.REJECT_REASONS, "delete_reasons": core.DELETE_REASONS,
+            "check_statuses": core.CHECK_STATUSES, "goods_check": core.GOODS_CHECK,
+            "last_import": li["v"] if li else None,
+        }
+        cached["data"] = result
+        cached["ts"] = now_ts
+        result = dict(result)
+    # Per-request данные (не кэшируются)
+    result["user"] = {"name": session.get("username"), "needs_password_change": session.get("needs_password_change")}
+    result["now"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    return jsonify(result)
 
 
 @app.get("/api/deals")
@@ -68,7 +79,6 @@ def deals():
         con = core.db()
         rows = [dict(r) for r in con.execute("SELECT * FROM deals")]
         user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
-        con.close()
         out = []
         for d in rows:
             d.update(core.derive(d, user_action_keys=user_action_keys))
