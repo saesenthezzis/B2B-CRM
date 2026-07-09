@@ -16,148 +16,68 @@ import re
 import sqlite3
 import threading
 import time
+
 try:
-    import libsql_client
-    _HAS_LIBSQL = True
+    import sqlitecloud
+    _HAS_SQLITECLOUD = True
 except ImportError:
-    libsql_client = None  # type: ignore
-    _HAS_LIBSQL = False
+    sqlitecloud = None
+    _HAS_SQLITECLOUD = False
+
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-class _DummyCursor:
-    def __init__(self, rs):
-        self.rs = rs
-        self._rows = []
-        if rs:
-            if hasattr(rs, 'rows') and hasattr(rs, 'columns'):
-                columns = rs.columns
-                for row in rs.rows:
-                    d = {columns[i]: row[i] for i in range(len(columns))}
-                    self._rows.append(d)
-            elif hasattr(rs, 'description') and rs.description:
-                columns = [col[0] for col in rs.description]
-                for row in rs.fetchall():
-                    d = {columns[i]: row[i] for i in range(len(columns))}
-                    self._rows.append(d)
-        self._idx = 0
-
-    def fetchone(self):
-        if self._idx < len(self._rows):
-            res = self._rows[self._idx]
-            self._idx += 1
-            return res
-        return None
-
-    def fetchall(self):
-        res = self._rows[self._idx:]
-        self._idx = len(self._rows)
-        return res
-
-    def __iter__(self):
-        return iter(self._rows)
-
-
-def _split_sql_script(sql_script):
-    return [stmt.strip() for stmt in sql_script.split(";") if stmt.strip()]
-def _filter_params(sql, params):
-    if not params or not isinstance(params, dict):
-        return params
-    used = set(re.findall(r":([a-zA-Z_][a-zA-Z0-9_]*)", sql))
-    return {k: v for k, v in params.items() if k in used}
-
-
 class _DbWrapper:
-    def __init__(self, url, auth_token):
+    def __init__(self, url):
         self._is_singleton = False  # singleton нельзя закрывать
-        if url.startswith("file:"):
-            self.con = sqlite3.connect(url.replace("file:", ""))
-            self.con.row_factory = sqlite3.Row
-            self.is_sqlite = True
+        if url.startswith("sqlitecloud://"):
+            if not _HAS_SQLITECLOUD:
+                raise RuntimeError("sqlitecloud package required")
+            self.con = sqlitecloud.connect(url)
+            self.con.row_factory = sqlitecloud.Row
         else:
-            if not _HAS_LIBSQL:
-                raise RuntimeError("libsql_client is required for remote database URLs")
-            remote_url = url.replace("libsql://", "https://")
-            self.client = libsql_client.create_client_sync(
-                remote_url,
-                auth_token=auth_token,
-            )
-            self.is_sqlite = False
+            path = url.replace("file:", "")
+            self.con = sqlite3.connect(path)
+            self.con.row_factory = sqlite3.Row
     
     def cursor(self):
-        if self.is_sqlite:
-            return self.con.cursor()
-        return self
+        return self.con.cursor()
 
     def execute(self, sql, params=None, silent=False):
-        if self.is_sqlite:
+        try:
             if params is not None:
                 return self.con.execute(sql, params)
             return self.con.execute(sql)
-        else:
-            try:
-                if isinstance(params, dict):
-                    safe_params = _filter_params(sql, params)
-                    stmt = libsql_client.Statement(sql, safe_params)
-                    result = self.client.execute(stmt)
-                else:
-                    args = params if params is not None else []
-                    result = self.client.execute(sql, args)
-                return _DummyCursor(result)
-            except Exception as e:
-                if not silent:
-                    import traceback
-                    print(f"[TURSO ERROR] SQL: {sql} | Params: {params}")
-                    traceback.print_exc()
-                raise
+        except Exception as e:
+            if not silent:
+                import traceback
+                print(f"[DB ERROR] SQL: {sql} | Params: {params}")
+                traceback.print_exc()
+            raise
 
     def executescript(self, sql_script):
-        if self.is_sqlite:
-            self.con.executescript(sql_script)
-        else:
-            statements = _split_sql_script(sql_script)
-            if statements:
-                self.client.batch(statements)
+        self.con.executescript(sql_script)
     
     def execute_batch(self, statements_list):
-        """Отправляет список (sql, params) батчами по 1000 — минимум HTTP round-trips."""
         if not statements_list:
             return
-        if self.is_sqlite:
-            for sql, params in statements_list:
-                if params is not None:
-                    self.con.execute(sql, params)
-                else:
-                    self.con.execute(sql)
-            self.con.commit()
-        else:
-            batch_size = 1000
-            for i in range(0, len(statements_list), batch_size):
-                chunk = statements_list[i : i + batch_size]
-                parts = []
-                for sql, params in chunk:
-                    if params is None:
-                        parts.append(sql)
-                    elif isinstance(params, dict):
-                        safe_params = _filter_params(sql, params)
-                        parts.append(libsql_client.Statement(sql, safe_params))
-                    else:
-                        parts.append(libsql_client.Statement(sql, params))
-                self.client.batch(parts)
+        for sql, params in statements_list:
+            if params is not None:
+                self.con.execute(sql, params)
+            else:
+                self.con.execute(sql)
+        self.con.commit()
     
     def commit(self):
-        if self.is_sqlite:
-            self.con.commit()
+        self.con.commit()
             
     def close(self):
         if self._is_singleton:
-            return  # singleton переиспользуется, не закрываем
-        if self.is_sqlite:
-            self.con.close()
-        else:
-            self.client.close()
+            return
+        self.con.close()
+
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "rmko.db")
@@ -303,7 +223,7 @@ def _run_migrations(con):
 
 
 _schema_applied = False
-_turso_singleton = None  # singleton для Turso — переиспользуем HTTPS-клиент
+_db_singleton = None  # singleton 
 _db_lock = threading.Lock()  # потокобезопасность singleton
 
 # ---------------- кэш meta ----------------
@@ -326,21 +246,20 @@ def invalidate_meta_cache():
 
 
 def db():
-    """Получить соединение к БД. Для Turso переиспользует singleton-клиент."""
-    global _schema_applied, _turso_singleton
-    url = os.getenv("TURSO_DATABASE_URL", f"file:{DB_PATH}").replace("libsql://", "https://")
-    auth_token = os.getenv("TURSO_AUTH_TOKEN", "")
+    """Получить соединение к БД."""
+    global _schema_applied, _db_singleton
+    url = os.getenv("DATABASE_URL", f"file:{DB_PATH}")
 
     if url.startswith("file:") or url.startswith("/"):
         # Локальный SQLite — каждый раз новое соединение (дёшево)
-        con = _DbWrapper(url, auth_token)
+        con = _DbWrapper(url)
     else:
-        # Turso — переиспользуем singleton (TLS handshake один раз)
+        # SQLite Cloud — переиспользуем singleton
         with _db_lock:
-            if _turso_singleton is None:
-                _turso_singleton = _DbWrapper(url, auth_token)
-                _turso_singleton._is_singleton = True
-        con = _turso_singleton
+            if _db_singleton is None:
+                _db_singleton = _DbWrapper(url)
+                _db_singleton._is_singleton = True
+        con = _db_singleton
 
     if not _schema_applied:
         con.executescript(SCHEMA)

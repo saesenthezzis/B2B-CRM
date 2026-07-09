@@ -1,7 +1,7 @@
 Flask
 pandas
 openpyxl
-libsql-client
+sqlitecloud
 python-dotenv
 gunicorn
 watchdog

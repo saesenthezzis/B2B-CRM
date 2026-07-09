@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Автосинхронизация 1С → Turso.
+"""Автосинхронизация 1С → SQLite Cloud.
 
 Скрипт мониторит файл выгрузки из 1С (CSV) в сетевой папке в реальном времени,
-и при появлении обновленного файла — импортирует данные в облачную БД Turso.
+и при появлении обновленного файла — импортирует данные в облачную БД SQLite Cloud.
 
 Использует watchdog для реального мониторинга файловой системы.
 Запускается как Windows Service для непрерывной работы.
@@ -43,7 +43,7 @@ LOG_FILE = os.path.join(BASE_DIR, "sync.log")
 # Нужно чтобы файл полностью записался 1С
 SYNC_DELAY = 5
 
-# Размер батча для импорта в Turso
+# Размер батча для импорта в SQLite Cloud
 BATCH_SIZE = 1000
 
 # ─── Логирование ─────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ def run_sync():
     1. Находит файл выгрузки в сетевой папке
     2. Проверяет, обновился ли он
     3. Валидирует структуру CSV
-    4. Если да — импортирует в Turso через core.import_csv()
+    4. Если да — импортирует в облако через core.import_csv()
     5. Сохраняет состояние
     """
     log.info("=" * 60)
@@ -205,15 +205,16 @@ def run_sync():
         return False
     log.info("Валидация пройдена успешно.")
 
-    # 5. Импортируем данные в Turso
+    # 5. Импортируем данные в БД
     try:
         import core
-        log.info("Запускаю импорт CSV → Turso (batch size=%d)...", BATCH_SIZE)
+        log.info("Запускаю импорт CSV → SQLite Cloud (batch size=%d)...", BATCH_SIZE)
         stats = core.import_csv(
             csv_path=file_path,
             encoding=CSV_ENCODING,
             separator=CSV_SEPARATOR,
         )
+
         log.info("Импорт завершён: новых=%d, обновлено=%d, без изменений=%d, пропущено=%d",
                  stats["new"], stats["updated"], stats["unchanged"], stats["skipped"])
     except FileNotFoundError as e:

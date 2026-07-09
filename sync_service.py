@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Windows Service для автоматической синхронизации 1С → Turso.
+"""Windows Service для автоматической синхронизации 1С → SQLite Cloud.
 
 Запускается как фоновый сервис Windows и мониторит сетевую папку
 с файлом выгрузки из 1С в реальном времени.
@@ -37,8 +37,8 @@ class RMKOSyncService(win32serviceutil.ServiceFramework):
     """Windows Service для мониторинга синхронизации РМКО."""
     
     _svc_name_ = "RMKOSyncService"
-    _svc_display_name_ = "РМКО Автосинхронизация 1С-Turso"
-    _svc_description_ = "Мониторит сетевую папку с выгрузкой из 1С и автоматически синхронизирует данные в облачную БД Turso"
+    _svc_display_name_ = "РМКО Автосинхронизация 1С-SQLiteCloud"
+    _svc_description_ = "Мониторит сетевую папку с выгрузкой из 1С и автоматически синхронизирует данные в облачную БД SQLite Cloud"
     
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
