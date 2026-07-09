@@ -204,7 +204,8 @@ CREATE TABLE IF NOT EXISTS deals (
     check_status TEXT, in_stock TEXT DEFAULT 'Ожидает проверки', closing_docs INTEGER, delivery TEXT,
     contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
     flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
-    updated_at TEXT, updated_by TEXT
+    updated_at TEXT, updated_by TEXT,
+    computed_status TEXT, computed_level TEXT
 );
 CREATE TABLE IF NOT EXISTS history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,11 +250,16 @@ _MIGRATIONS = [
     "ALTER TABLE deals ADD COLUMN payment_date TEXT",
     "ALTER TABLE deals ADD COLUMN has_payment INTEGER DEFAULT 0",
     "ALTER TABLE deals ADD COLUMN invoice_basis TEXT",
+    "ALTER TABLE deals ADD COLUMN computed_status TEXT",
+    "ALTER TABLE deals ADD COLUMN computed_level TEXT",
     "CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key)",
     "CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage)",
     "CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at)",
     "CREATE INDEX IF NOT EXISTS ix_deals_status1c ON deals(status_1c)",
     "CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_computed_status ON deals(computed_status)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_computed_level ON deals(computed_level)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_status_level ON deals(computed_status, computed_level)",
 ]
 
 # Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
@@ -282,6 +288,16 @@ def _run_migrations(con):
         pass
     try:
         con.commit()
+    except Exception:
+        pass
+    # Заполнить computed_status/computed_level если есть пустые
+    try:
+        need = con.execute(
+            "SELECT COUNT(*) as c FROM deals WHERE computed_status IS NULL OR computed_level IS NULL",
+            silent=True
+        ).fetchone()
+        if need and (need["c"] if isinstance(need, dict) else need[0]) > 0:
+            recompute_all_statuses(con)
     except Exception:
         pass
 
@@ -619,6 +635,101 @@ def derive(d, today=None, user_action_keys=None):
     }
 
 
+def compute_deal_level(d, today=None):
+    """Вычислить computed_status и computed_level для сделки (для хранения в БД).
+    
+    Возвращает (computed_status, computed_level).
+    Не зависит от user_action_keys — это чисто данные 1С + менеджерские поля.
+    """
+    today = today or date.today()
+    st = cur_status(d)
+    stage = d.get("stage") or ""
+    paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
+    
+    in_stock_val = d.get("in_stock") or "Ожидает проверки"
+    if st in ("Удален", "Удалён"):
+        in_stock_val = "Закрыто" if in_stock_val == "Проверено" else "Закрыто автоматически"
+    elif st == "Выдан":
+        in_stock_val = "Закрыто" if in_stock_val == "Проверено" else "Закрыто автоматически"
+    elif in_stock_val == "Товар есть":
+        in_stock_val = "Проверено"
+    
+    in_stock_ok = in_stock_val == "Проверено"
+    wd = workdays_between(d.get("doc_date") or d.get("created_at"), today)
+
+    # Ошибки (из derive)
+    has_errors = False
+    if stage == "Закрыто" and (not in_stock_ok or not d.get("close_date")):
+        has_errors = True
+    if stage == "Удалён" and st not in ("Удалён", "Удален"):
+        if not d.get("delete_reason") or not d.get("close_date"):
+            has_errors = True
+    if stage == "Не состоялась":
+        if not d.get("reject_reason") or not d.get("close_date"):
+            has_errors = True
+
+    # Уровень (из derive)
+    if st in ("Удален", "Удалён"):
+        level = "error" if not d.get("notes") else "closed"
+    elif has_errors:
+        level = "error"
+    elif st == "Выдан":
+        level = "done"
+    elif st == "Резерв" and paid:
+        level = "ready"
+    elif st == "Резерв" and wd >= 3 and not paid:
+        level = "risk"
+    elif st == "Резерв" and not paid:
+        level = "warn"
+    else:
+        level = "info"
+
+    return st, level
+
+
+def recompute_all_statuses(con):
+    """Массовое обновление computed_status/computed_level для всех сделок.
+    
+    Загружает только нужные поля, вычисляет в Python и обновляет батчем.
+    """
+    cols = ("key, status_1c, deleted, posted, reserved, stage, "
+            "has_payment, payment_amount, payment_date, "
+            "in_stock, close_date, delete_reason, reject_reason, notes, "
+            "doc_date, created_at")
+    rows = list(con.execute(f"SELECT {cols} FROM deals"))
+    if not rows:
+        return
+    
+    today = date.today()
+    stmts = []
+    for r in rows:
+        d = dict(r) if not isinstance(r, dict) else r
+        comp_status, comp_level = compute_deal_level(d, today)
+        stmts.append((
+            "UPDATE deals SET computed_status = :cs, computed_level = :cl WHERE key = :key",
+            {"cs": comp_status, "cl": comp_level, "key": d["key"]}
+        ))
+    
+    con.execute_batch(stmts)
+    try:
+        con.commit()
+    except Exception:
+        pass
+
+
+def recompute_deal(con, key):
+    """Обновить computed_status/computed_level для одной сделки."""
+    row = con.execute("SELECT * FROM deals WHERE key = :key", {"key": key}).fetchone()
+    if not row:
+        return
+    d = dict(row) if not isinstance(row, dict) else row
+    comp_status, comp_level = compute_deal_level(d)
+    con.execute(
+        "UPDATE deals SET computed_status = :cs, computed_level = :cl WHERE key = :key",
+        {"cs": comp_status, "cl": comp_level, "key": key}
+    )
+
+
 # ---------------- зоны ответственности ----------------
 
 def load_specialists(con=None):
@@ -801,6 +912,7 @@ def _finalize_import(con, now):
     """Автозаполнение для выданных накладных + обновление meta.
     
     Все 4 запроса отправляются одним батчем — один HTTP round-trip вместо четырёх.
+    После этого пересчитываем computed_status/computed_level.
     """
     con.execute_batch([
         (
@@ -823,6 +935,8 @@ def _finalize_import(con, now):
         ("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,)),
     ])
     con.commit()
+    # Пересчитать precomputed статусы после импорта
+    recompute_all_statuses(con)
 
 
 def import_xlsx(xlsx_path=None, first=False):
@@ -923,6 +1037,7 @@ if __name__ == "__main__":
 
 
 # --- SQL Builders for Backend Pagination ---
+# Старые SQL выражения (используются ТОЛЬКО в /api/stats, где нет precomputed колонок)
 SQL_STATUS = '''
 COALESCE(
   CASE WHEN status_1c IN ('Выдан', 'Резерв', 'Удален', 'Удалён', 'Прочее') THEN status_1c ELSE NULL END,
@@ -975,8 +1090,15 @@ def get_workdays_ago(days):
     return cur.strftime("%Y-%m-%d")
 
 def build_filters_sql(args, zone_cities=None):
+    """Построить WHERE-условие для /api/deals.
+    
+    Использует precomputed колонки computed_status и computed_level
+    для быстрой фильтрации по вкладкам (queue) — вместо вычисления
+    на лету через вложенные CASE-выражения.
+    """
     where = ["1=1"]
     params = {}
+    # risk_date/overdue_date всё ещё нужны для /api/stats (SQL_LEVEL)
     params["risk_date"] = get_workdays_ago(3)
     params["overdue_date"] = get_workdays_ago(2)
 
@@ -1000,9 +1122,10 @@ def build_filters_sql(args, zone_cities=None):
         where.append("stage = :stage")
         params["stage"] = stage
 
+    # Используем precomputed computed_status вместо SQL_STATUS
     status = args.get("status", "")
     if status:
-        where.append(f"{SQL_STATUS} = :status")
+        where.append("computed_status = :status")
         params["status"] = status
 
     payment = args.get("payment", "")
@@ -1049,21 +1172,24 @@ def build_filters_sql(args, zone_cities=None):
         where.append("(LOWER(COALESCE(client,'')) LIKE :q OR LOWER(COALESCE(doc_num,'')) LIKE :q OR LOWER(COALESCE(comment_1c,'')) LIKE :q OR LOWER(COALESCE(notes,'')) LIKE :q OR LOWER(COALESCE(contacts,'')) LIKE :q)")
         params["q"] = f"%{q}%"
 
+    # === Фильтрация по вкладкам — через precomputed колонки ===
     queue = args.get("queue", "new")
     if queue == "new":
-        where.append(f"{SQL_STATUS} = 'Резерв'")
+        # Новые = Резерв (все сделки в статусе Резерв)
+        where.append("computed_status = 'Резерв'")
     elif queue == "action":
-        where.append(f'''(
-            ({SQL_STATUS} = 'Резерв' AND NOT {SQL_IS_PAID}) OR 
-            ({SQL_STATUS} IN ('Удален', 'Удалён') AND (notes IS NULL OR notes = '')) OR 
-            ({SQL_STATUS} = 'Резерв' AND {SQL_IS_PAID} AND {SQL_STATUS} != 'Выдан')
-        )''')
+        # Требует действия = Резерв (неоплаченные + оплаченные) + Удалён без причины
+        # Т.е. всё кроме done и closed — сделки требующие внимания менеджера
+        where.append("computed_level IN ('risk', 'warn', 'error', 'ready', 'info')")
+        where.append("computed_status != 'Выдан'")
     elif queue == "done":
-        where.append(f"{SQL_STATUS} = 'Выдан'")
+        # Закрытые = Выдан
+        where.append("computed_status = 'Выдан'")
     elif queue == "lost":
-        where.append(f'''(
-            ({SQL_STATUS} IN ('Удален', 'Удалён') AND notes IS NOT NULL AND notes != '') OR 
-            ({SQL_IS_CLOSED} AND ({SQL_LEVEL}) != 'done')
-        )''')
+        # Без продажи = Удалённые с причиной + закрытые не-done
+        where.append("(" 
+            "(computed_status IN ('Удален', 'Удалён') AND notes IS NOT NULL AND notes != '') OR "
+            "(computed_level = 'closed' AND computed_status NOT IN ('Выдан'))"
+        ")")
 
     return " AND ".join(where), params

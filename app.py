@@ -97,7 +97,7 @@ def deals():
     
     order_by = sort_col
     if sort_col == "status":
-        order_by = f"({core.SQL_LEVEL})"
+        order_by = "computed_level"
     elif sort_col not in ("amount", "client", "doc_date", "stage", "city", "doc_num", "in_stock", "plan_contact", "notes", "author"):
         order_by = "amount"
         
@@ -271,6 +271,9 @@ def patch_deal(key):
         params = dict(changes)
         params["key"] = key
         con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
+        con.commit()
+        # Пересчитать precomputed статусы после изменений
+        core.recompute_deal(con, key)
         con.commit()
     fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
     has_action = con.execute("SELECT 1 FROM history WHERE deal_key=? AND user != '1С-импорт' LIMIT 1", (key,)).fetchone() is not None

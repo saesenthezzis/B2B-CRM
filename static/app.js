@@ -134,6 +134,12 @@ const QUEUES = [
   { id: 'all', name: 'Все' },
 ];
 
+let _renderTimer = null;
+function debouncedRender() {
+  if (_renderTimer) clearTimeout(_renderTimer);
+  _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 150);
+}
+
 function renderQueues() {
   const html = '<div class="radio-inputs">' + QUEUES.map(t => {
     const checked = t.id === queue ? 'checked' : '';
@@ -144,7 +150,7 @@ function renderQueues() {
   }).join('') + '</div>';
   $('queues').innerHTML = html;
   $('queues').querySelectorAll('input[type="radio"]').forEach(b =>
-    b.onchange = () => { queue = b.dataset.q; page = 0; render(); });
+    b.onchange = () => { queue = b.dataset.q; page = 0; debouncedRender(); });
 }
 
 function buildParams() {
