@@ -1156,8 +1156,11 @@ def build_filters_sql(args, zone_cities=None):
     mine = args.get("mine", "false") == "true"
     me = args.get("me", "")
     if mine and me:
+        # Match on surname (first word) — 1С author may differ from specialists
+        # e.g. specialist "Бецанич Владислава Викторовна" vs author "Бецанич В.В."
+        surname = me.split()[0] if me.strip() else me
         where.append("LOWER(author) LIKE :me")
-        params["me"] = f"%{me.lower()}%"
+        params["me"] = f"%{surname.lower()}%"
 
     range_from = args.get("fFrom", "")
     range_to = args.get("fTo", "")
