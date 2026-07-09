@@ -93,3 +93,15 @@ class DealRepository:
         '''
         mgr_rows = list(self.db.execute(mgr_sql, params))
         return {r["a"]: dict(r) for r in mgr_rows}
+
+    def get_dashboard_raw_deals(self, where_sql, params):
+        query = f"SELECT COALESCE(doc_date, created_at) as date, amount, city, author, stage, client FROM deals WHERE {where_sql} ORDER BY date ASC"
+        return list(self.db.execute(query, params))
+
+    def get_dashboard_structure(self, where_sql, params, group_col):
+        query = f"SELECT COALESCE({group_col}, '(не указано)') as label, SUM(amount) as val FROM deals WHERE {where_sql} GROUP BY label ORDER BY val DESC LIMIT 12"
+        return list(self.db.execute(query, params))
+
+    def get_dashboard_rating(self, where_sql, params):
+        query = f"SELECT COALESCE(client, '(не указано)') as label, SUM(amount) as val FROM deals WHERE {where_sql} GROUP BY label ORDER BY val DESC LIMIT 10"
+        return list(self.db.execute(query, params))

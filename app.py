@@ -97,6 +97,22 @@ def deals():
         return jsonify({"error": str(e)}), 500
 
 
+@app.get("/api/deals/summary")
+@login_required
+def deals_summary():
+    db = get_db()
+    repo = DealRepository(db)
+    service = DealService(repo)
+    user_name = session.get("username", "")
+    try:
+        result = service.get_deals_summary(user_name, request.args)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.get("/api/stats")
 @login_required
 def stats():
@@ -357,90 +373,115 @@ def auth_logout():
 @app.get("/api/dashboard/data")
 @login_required
 def dashboard_data():
-    import pandas as pd
     view = request.args.get("view", "trend")
     period = request.args.get("period", "month")
     group_by = request.args.get("groupBy", "city")
 
-    con = core.db()
-    rows = [dict(r) for r in con.execute(
-        "SELECT doc_date, created_at, amount, client, city, author, stage, "
-        "deleted, posted, reserved FROM deals"
-    )]
-    con.close()
-
-    if not rows:
-        return jsonify({"labels": [], "values": [], "series": []})
-
-    df = pd.DataFrame(rows)
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
-    df["date"] = pd.to_datetime(
-        df["doc_date"].fillna(df["created_at"]), errors="coerce"
-    )
-    df = df.dropna(subset=["date"])
-
-    # period filter
-    now = pd.Timestamp.now()
+    user_name = session.get("username", "")
+    db = get_db()
+    zone_cities = []
+    if user_name:
+        specialists = core.load_specialists(db)
+        for s in specialists:
+            if s["name"] == user_name and s["city"]:
+                zone_cities.append(s["city"])
+                
+    where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
+    
+    from datetime import datetime, timedelta
+    now = datetime.now()
     if period == "week":
-        df = df[df["date"] >= now - pd.Timedelta(days=7)]
+        date_threshold = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     elif period == "month":
-        df = df[df["date"] >= now - pd.Timedelta(days=30)]
+        date_threshold = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
     elif period == "quarter":
-        df = df[df["date"] >= now - pd.Timedelta(days=90)]
+        date_threshold = (now - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
     elif period == "year":
-        df = df[df["date"] >= now - pd.Timedelta(days=365)]
+        date_threshold = (now - timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        date_threshold = "1970-01-01"
+        
+    filtered_where_sql = f"({where_sql}) AND COALESCE(doc_date, created_at) >= :date_threshold"
+    params["date_threshold"] = date_threshold
 
-    if df.empty:
-        return jsonify({"labels": [], "values": [], "series": []})
+    repo = DealRepository(db)
 
     if view == "trend":
-        # candlestick-style OHLC by day
-        df = df.set_index("date").sort_index()
-        freq = "D" if period == "week" else "W" if period in ("month", "quarter") else "ME"
-        ohlc = df["amount"].resample(freq).agg(
-            open="first", high="max", low="min", close="last"
-        ).dropna()
+        raw = repo.get_dashboard_raw_deals(filtered_where_sql, params)
+        if not raw:
+            return jsonify({"series": []})
+        
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for r in raw:
+            dt = r["date"][:10] if r["date"] else None
+            if not dt: continue
+            try:
+                date_obj = datetime.strptime(dt, "%Y-%m-%d")
+            except ValueError:
+                continue
+            
+            if period == "week":
+                key = dt
+            elif period in ("month", "quarter"):
+                key = date_obj.strftime("%Y-W%W")
+            else:
+                key = date_obj.strftime("%Y-%m")
+            
+            amt = float(r["amount"]) if r["amount"] is not None else 0.0
+            grouped[key].append(amt)
+            
         series = []
-        for ts, row in ohlc.iterrows():
+        for key in sorted(grouped.keys()):
+            vals = grouped[key]
             series.append({
-                "time": ts.strftime("%Y-%m-%d"),
-                "open": round(row["open"], 2),
-                "high": round(row["high"], 2),
-                "low": round(row["low"], 2),
-                "close": round(row["close"], 2),
+                "time": key,
+                "open": round(vals[0], 2),
+                "high": round(max(vals), 2),
+                "low": round(min(vals), 2),
+                "close": round(vals[-1], 2),
             })
         return jsonify({"series": series})
 
     elif view == "structure":
         col_map = {"city": "city", "author": "author", "stage": "stage"}
         col = col_map.get(group_by, "city")
-        grp = df.groupby(df[col].fillna("(не указано)"))["amount"].sum()
-        grp = grp.sort_values(ascending=False).head(12)
+        data = repo.get_dashboard_structure(filtered_where_sql, params, col)
         return jsonify({
-            "labels": grp.index.tolist(),
-            "values": [round(v, 2) for v in grp.values.tolist()],
+            "labels": [r["label"] for r in data],
+            "values": [round(float(r["val"] or 0), 2) for r in data]
         })
 
     elif view == "rating":
-        grp = df.groupby(df["client"].fillna("(не указано)"))["amount"].sum()
-        grp = grp.sort_values(ascending=False).head(10)
+        data = repo.get_dashboard_rating(filtered_where_sql, params)
         return jsonify({
-            "labels": grp.index.tolist(),
-            "values": [round(v, 2) for v in grp.values.tolist()],
+            "labels": [r["label"] for r in data],
+            "values": [round(float(r["val"] or 0), 2) for r in data]
         })
 
     elif view == "plan":
-        # cumulative daily sum for current month
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        mdf = df[df["date"] >= month_start].copy()
-        if mdf.empty:
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        plan_where = f"({where_sql}) AND COALESCE(doc_date, created_at) >= :month_start"
+        params["month_start"] = month_start
+        
+        raw = repo.get_dashboard_raw_deals(plan_where, params)
+        if not raw:
             return jsonify({"series": []})
-        daily = mdf.set_index("date").resample("D")["amount"].sum().fillna(0)
-        cumulative = daily.cumsum()
-        series = [
-            {"x": ts.strftime("%Y-%m-%d"), "y": round(v, 2)}
-            for ts, v in cumulative.items()
-        ]
+            
+        from collections import defaultdict
+        daily = defaultdict(float)
+        for r in raw:
+            dt = r["date"][:10] if r["date"] else None
+            if dt:
+                amt = float(r["amount"]) if r["amount"] is not None else 0.0
+                daily[dt] += amt
+                
+        series = []
+        cum = 0.0
+        for key in sorted(daily.keys()):
+            cum += daily[key]
+            series.append({"x": key, "y": round(cum, 2)})
+            
         return jsonify({"series": series})
 
     return jsonify({"error": "unknown view"}), 400

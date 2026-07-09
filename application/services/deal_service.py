@@ -40,21 +40,38 @@ class DealService:
         # 1. Fetch raw deals
         raw_deals = self.repo.get_deals(where_sql, params, order_clause, limit, offset)
         
-        # 2. Fetch aggregates
-        total, total_sum = self.repo.get_deals_aggregates(where_sql, params)
-        
-        # 3. Fetch user actions
+        # 2. Fetch user actions
         page_keys = [r["key"] for r in raw_deals]
         user_action_keys = self.repo.get_user_actions_for_keys(page_keys)
         
-        # 4. Derive computed fields
+        # 3. Derive computed fields
         out = []
         for d in raw_deals:
             d.update(core.derive(d, user_action_keys=user_action_keys))
             out.append(d)
             
         return {
-            "items": out,
+            "items": out
+        }
+
+    def get_deals_summary(self, user_name, request_args):
+        con = self.repo.db
+        zone_cities = []
+        if user_name:
+            specialists = core.load_specialists(con)
+            for s in specialists:
+                if s["name"] == user_name and s["city"]:
+                    zone_cities.append(s["city"])
+                    
+        where_sql, params = core.build_filters_sql(request_args, zone_cities=zone_cities)
+        
+        total, total_sum = self.repo.get_deals_aggregates(where_sql, params)
+        kpi = self.repo.get_kpi_stats(where_sql, params)
+        for k, v in kpi.items():
+            if v is None: kpi[k] = 0
+            
+        return {
             "total": total,
-            "sum": total_sum
+            "sum": total_sum,
+            "kpi": kpi
         }
