@@ -47,7 +47,7 @@ async function loadAll() {
     updateFilterVisual($('fPayment'));
     
     applyManagerZone(false);
-    refresh();
+    render();
   } catch (e) {
     if (e.message === '401') location.href = '/login';
     else toast('Ошибка загрузки данных', true);
