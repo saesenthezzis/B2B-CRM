@@ -58,7 +58,16 @@ class _DbWrapper:
             raise
 
     def executescript(self, sql_script):
-        self.con.executescript(sql_script)
+        if hasattr(self.con, 'executescript') and not self._is_sqlitecloud():
+            self.con.executescript(sql_script)
+        else:
+            for stmt in sql_script.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self.con.execute(stmt)
+                    
+    def _is_sqlitecloud(self):
+        return type(self.con).__module__.startswith("sqlitecloud")
     
     def execute_batch(self, statements_list):
         if not statements_list:
