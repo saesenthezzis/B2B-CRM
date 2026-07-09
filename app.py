@@ -111,13 +111,22 @@ def deals():
     query = f"SELECT * FROM deals WHERE {where_sql} {order_clause} LIMIT {limit} OFFSET {offset}"
     rows = [dict(r) for r in con.execute(query, params)]
     
-    count_res = list(con.execute(f"SELECT COUNT(*) as c FROM deals WHERE {where_sql}", params))
-    total = count_res[0]["c"] if count_res else 0
+    # Combined COUNT + SUM in a single query (1 HTTP round-trip instead of 2)
+    agg_res = list(con.execute(
+        f"SELECT COUNT(*) as c, COALESCE(SUM(amount), 0) as s FROM deals WHERE {where_sql}", params))
+    total = agg_res[0]["c"] if agg_res else 0
+    total_sum = agg_res[0]["s"] if agg_res else 0
     
-    sum_res = list(con.execute(f"SELECT SUM(amount) as s FROM deals WHERE {where_sql}", params))
-    total_sum = sum_res[0]["s"] if sum_res and sum_res[0]["s"] is not None else 0
-    
-    user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
+    # Only check user actions for the visible page's deal keys (not full table scan)
+    user_action_keys = set()
+    if rows:
+        page_keys = [r["key"] for r in rows]
+        placeholders = ", ".join(f":dk_{i}" for i in range(len(page_keys)))
+        dk_params = {f"dk_{i}": k for i, k in enumerate(page_keys)}
+        action_rows = con.execute(
+            f"SELECT DISTINCT deal_key FROM history WHERE deal_key IN ({placeholders}) AND user != '1С-импорт'",
+            dk_params)
+        user_action_keys = {r["deal_key"] for r in action_rows}
     
     out = []
     for d in rows:
