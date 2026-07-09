@@ -276,15 +276,21 @@ async function render() {
   $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;padding:22px"><div class="loader-spinner"></div> Загрузка...</td></tr>';
   
   try {
-    const r = await fetch('/api/deals?' + buildParams().toString(), { signal: renderController.signal });
-    if (!r.ok) {
-        if (r.status === 401) return location.href = '/login';
-        throw new Error('Ошибка ' + r.status);
+    const paramsStr = buildParams().toString();
+    const [rDeals, rSummary] = await Promise.all([
+      fetch('/api/deals?' + paramsStr, { signal: renderController.signal }),
+      fetch('/api/deals/summary?' + paramsStr, { signal: renderController.signal })
+    ]);
+
+    if (!rDeals.ok || !rSummary.ok) {
+        if (rDeals.status === 401 || rSummary.status === 401) return location.href = '/login';
+        throw new Error('Ошибка ' + (rDeals.status !== 200 ? rDeals.status : rSummary.status));
     }
-    const res = await r.json();
+    const res = await rDeals.json();
+    const summary = await rSummary.json();
     
     DATA = res.items;
-    const pages = Math.max(1, Math.ceil(res.total / PAGE));
+    const pages = Math.max(1, Math.ceil(summary.total / PAGE));
     if (page >= pages && pages > 0) { page = pages - 1; return render(); }
     
     $('tbl').querySelector('tbody').innerHTML =
@@ -292,7 +298,7 @@ async function render() {
     bindRowEvents();
     $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
     $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
-    $('totals').textContent = `${res.total.toLocaleString('ru-RU')} сделок · ${mln(res.sum)}`;
+    $('totals').textContent = `${(summary.total || 0).toLocaleString('ru-RU')} сделок · ${mln(summary.sum || 0)}`;
   } catch (e) {
     if (e.name !== 'AbortError') {
       $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;color:red;padding:22px">Ошибка загрузки данных</td></tr>';
