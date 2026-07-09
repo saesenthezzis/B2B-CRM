@@ -90,7 +90,7 @@ class _DbWrapper:
             return self.con.cursor()
         return self
 
-    def execute(self, sql, params=None):
+    def execute(self, sql, params=None, silent=False):
         if self.is_sqlite:
             if params is not None:
                 return self.con.execute(sql, params)
@@ -106,9 +106,10 @@ class _DbWrapper:
                     result = self.client.execute(sql, args)
                 return _DummyCursor(result)
             except Exception as e:
-                import traceback
-                print(f"[TURSO ERROR] SQL: {sql} | Params: {params}")
-                traceback.print_exc()
+                if not silent:
+                    import traceback
+                    print(f"[TURSO ERROR] SQL: {sql} | Params: {params}")
+                    traceback.print_exc()
                 raise
 
     def executescript(self, sql_script):
@@ -271,12 +272,12 @@ def _run_migrations(con):
     """Добавить новые колонки в существующую таблицу deals (игнорирует дубли)."""
     for sql in _MIGRATIONS:
         try:
-            con.execute(sql)
+            con.execute(sql, silent=True)
         except Exception:
             pass  # колонка уже существует
     # Конвертация in_stock: INTEGER 0/1 → TEXT
     try:
-        con.execute(_MIGRATE_IN_STOCK)
+        con.execute(_MIGRATE_IN_STOCK, silent=True)
     except Exception:
         pass
     try:
