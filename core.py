@@ -232,8 +232,8 @@ def _run_migrations(con):
 
 
 _schema_applied = False
-_db_singleton = None  # singleton 
-_db_lock = threading.Lock()  # потокобезопасность singleton
+_local_db = threading.local()
+_schema_lock = threading.Lock()
 
 # ---------------- кэш meta ----------------
 _meta_cache = {"data": None, "ts": 0}
@@ -256,24 +256,25 @@ def invalidate_meta_cache():
 
 def db():
     """Получить соединение к БД."""
-    global _schema_applied, _db_singleton
+    global _schema_applied
     url = os.getenv("DATABASE_URL", f"file:{DB_PATH}")
 
     if url.startswith("file:") or url.startswith("/"):
         # Локальный SQLite — каждый раз новое соединение (дёшево)
         con = _DbWrapper(url)
     else:
-        # SQLite Cloud — переиспользуем singleton
-        with _db_lock:
-            if _db_singleton is None:
-                _db_singleton = _DbWrapper(url)
-                _db_singleton._is_singleton = True
-        con = _db_singleton
+        # SQLite Cloud — переиспользуем соединение для каждого потока отдельно
+        if not hasattr(_local_db, "con"):
+            _local_db.con = _DbWrapper(url)
+            _local_db.con._is_singleton = True
+        con = _local_db.con
 
     if not _schema_applied:
-        con.executescript(SCHEMA)
-        _run_migrations(con)
-        _schema_applied = True
+        with _schema_lock:
+            if not _schema_applied:
+                con.executescript(SCHEMA)
+                _run_migrations(con)
+                _schema_applied = True
     return con
 
 

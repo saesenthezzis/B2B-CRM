@@ -70,22 +70,23 @@ class DbWrapper:
             return
         self.con.close()
 
-_db_singleton = None
+import threading
+
+_local_db = threading.local()
 
 def get_db() -> DbWrapper:
-    global _db_singleton
-    if _db_singleton is not None:
-        return _db_singleton
-        
     db_url = os.getenv("DATABASE_URL", "")
     
     if db_url and db_url.startswith("sqlitecloud://"):
-        _db_singleton = DbWrapper(db_url)
+        if not hasattr(_local_db, "con"):
+            _local_db.con = DbWrapper(db_url)
+            _local_db.con._is_singleton = True
+        return _local_db.con
     else:
         # Fallback to local
-        BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        DB_PATH = os.path.join(BASE, "rmko.db")
-        _db_singleton = DbWrapper(f"file:{DB_PATH}")
-        
-    _db_singleton._is_singleton = True
-    return _db_singleton
+        if not hasattr(_local_db, "con"):
+            BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            DB_PATH = os.path.join(BASE, "rmko.db")
+            _local_db.con = DbWrapper(f"file:{DB_PATH}")
+            _local_db.con._is_singleton = True
+        return _local_db.con
