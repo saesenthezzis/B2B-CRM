@@ -19,14 +19,10 @@ function toast(msg, err) {
 
 /* ---------- загрузка ---------- */
 async function loadAll() {
-  // Покажем пустые счетчики (все по 0) во время загрузки данных
   renderQueues([]);
   try {
-    const [m, d] = await Promise.all([
-      fetch('/api/meta').then(r => { if (r.status === 401) throw new Error('401'); return r.json() }),
-      fetch('/api/deals').then(r => { if (r.status === 401) throw new Error('401'); return r.json() }),
-    ]);
-    META = m; DATA = d;
+    const m = await fetch('/api/meta').then(r => { if (r.status === 401) throw new Error('401'); return r.json() });
+    META = m;
     $('lastImport').textContent = m.last_import ? 'выгрузка: ' + m.last_import : '';
 
     if (m.user && m.user.needs_password_change) {
@@ -42,18 +38,16 @@ async function loadAll() {
     fillCitySelect();
     fillSelect($('fStage'), m.stages.map(s => 'Этап: ' + s).concat(['(пусто)']), localStorage.getItem('fStage') || '');
     
-    // Restore filter values from localStorage
     if (localStorage.getItem('fPeriod')) $('fPeriod').value = localStorage.getItem('fPeriod');
     if (localStorage.getItem('fStatus')) $('fStatus').value = localStorage.getItem('fStatus');
     if (localStorage.getItem('fPayment')) $('fPayment').value = localStorage.getItem('fPayment');
     
-    // Update visual states for restored filters
     updateFilterVisual($('fPeriod'));
     updateFilterVisual($('fStatus'));
     updateFilterVisual($('fPayment'));
     
     applyManagerZone(false);
-    render();
+    refresh();
   } catch (e) {
     if (e.message === '401') location.href = '/login';
     else toast('Ошибка загрузки данных', true);
@@ -130,81 +124,17 @@ function applyManagerZone(save = true) {
   if (save) localStorage.setItem('myCity', $('myCity').value);
 }
 
+
 /* ---------- очереди ---------- */
 const QUEUES = [
-  { id: 'new', name: 'Новые', f: d => d.cur_status === 'Резерв' },
-  { id: 'action', name: 'Требует действия', f: d => {
-    const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
-    const isIssued = d.cur_status === 'Выдан';
-    // Неоплаченные документы со статусом "Резерв"
-    if (d.cur_status === 'Резерв' && !paid) return true;
-    // Удаленные без заметки
-    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && !d.notes) return true;
-    // Оплаченные документы и не выданные, со статусом "Резерв"
-    if (d.cur_status === 'Резерв' && paid && !isIssued) return true;
-    return false;
-  }},
-  { id: 'done', name: 'Закрытые', f: d => d.cur_status === 'Выдан' },
-  { id: 'lost', name: 'Без продажи', f: d => {
-    // Удаленные с заполненной заметкой
-    if ((d.cur_status === 'Удален' || d.cur_status === 'Удалён') && d.notes) return true;
-    // Другие закрытые, но не выданные
-    return d.is_closed && d.level !== 'done';
-  } },
-  { id: 'all', name: 'Все', f: () => true },
+  { id: 'new', name: 'Новые' },
+  { id: 'action', name: 'Требует действия' },
+  { id: 'done', name: 'Закрытые' },
+  { id: 'lost', name: 'Без продажи' },
+  { id: 'all', name: 'Все' },
 ];
 
-/* ---------- фильтр периода ---------- */
-function periodRange() {
-  const p = $('fPeriod').value;
-  if (!p) return null;
-  const today = new Date();
-  const t = fmtDate(today);
-  const back = days => { const d = new Date(); d.setDate(d.getDate() - days); return fmtDate(d); };
-  switch (p) {
-    case 'today': return [t, t];
-    case 'day': return [back(1), t];
-    case 'week': return [back(7), t];
-    case 'month': return [back(30), t];
-    case 'year': return [back(365), t];
-    case 'manual': {
-      const from = $('fFrom').value || null, to = $('fTo').value || null;
-      return (from || to) ? [from, to] : null;
-    }
-  }
-  return null;
-}
-
-function baseFiltered() {
-  const city = $('myCity').value, stage = $('fStage').value, status = $('fStatus').value, payment = $('fPayment').value;
-  const q = $('q').value.toLowerCase(), mine = $('fMine').checked;
-  const me = ($('user').value || '').toLowerCase();
-  const zoneCities = SPEC[$('user').value] || [];
-  const range = periodRange();
-  return DATA.filter(d => {
-    if (city === ZONE) { if (!zoneCities.includes(d.city)) return false; }
-    else if (city && d.city !== city) return false;
-    if (stage && (stage === '(пусто)' ? d.stage : d.stage !== stage)) return false;
-    if (status && d.cur_status !== status) return false;
-    if (payment) {
-      const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
-      if (payment === 'paid' && !paid) return false;
-      if (payment === 'unpaid' && paid) return false;
-    }
-    if (mine && me && !(d.author || '').toLowerCase().includes(me)) return false;
-    if (range) {
-      const dd = (d.doc_date || d.created_at || '').slice(0, 10);
-      if (!dd) return false;
-      if (range[0] && dd < range[0]) return false;
-      if (range[1] && dd > range[1]) return false;
-    }
-    if (q && !((d.client || '') + ' ' + (d.doc_num || '') + ' ' + (d.comment_1c || '') + ' ' +
-      (d.notes || '') + ' ' + (d.contacts || '')).toLowerCase().includes(q)) return false;
-    return true;
-  });
-}
-
-function renderQueues(rows) {
+function renderQueues() {
   const html = '<div class="radio-inputs">' + QUEUES.map(t => {
     const checked = t.id === queue ? 'checked' : '';
     return `<label class="radio">
@@ -216,6 +146,29 @@ function renderQueues(rows) {
   $('queues').querySelectorAll('input[type="radio"]').forEach(b =>
     b.onchange = () => { queue = b.dataset.q; page = 0; render(); });
 }
+
+function buildParams() {
+  const p = new URLSearchParams();
+  p.set('queue', queue);
+  p.set('city', $('myCity').value);
+  p.set('stage', $('fStage').value);
+  p.set('status', $('fStatus').value);
+  p.set('payment', $('fPayment').value);
+  p.set('mine', $('fMine').checked);
+  p.set('me', $('user').value);
+  p.set('q', $('q').value);
+  p.set('period', $('fPeriod').value);
+  if ($('fPeriod').value === 'manual') {
+      p.set('fFrom', $('fFrom').value);
+      p.set('fTo', $('fTo').value);
+  }
+  p.set('sortCol', sortCol);
+  p.set('sortDir', sortDir);
+  p.set('page', page);
+  return p;
+}
+
+let renderController = null;
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
@@ -299,33 +252,46 @@ function rowHtml(d) {
 
 const cssKey = k => k.replace(/[^a-zA-Zа-яА-Я0-9]/g, '_');
 
-function render() {
-  const base = baseFiltered();
-  renderQueues(base);
-  let rows = base.filter(QUEUES.find(t => t.id === queue).f);
-  rows.sort((a, b) => {
-    let x = a[sortCol], y = b[sortCol];
-    if (sortCol === 'status') { x = a.level; y = b.level; }
-    if (typeof x === 'number' || typeof y === 'number') { x = x ?? -1e18; y = y ?? -1e18; return (x - y) * sortDir; }
-    return String(x ?? '').localeCompare(String(y ?? ''), 'ru') * sortDir;
-  });
+async function render() {
+  if (renderController) renderController.abort();
+  renderController = new AbortController();
+  
+  renderQueues();
   const thead = $('tbl').querySelector('thead');
   thead.innerHTML = '<tr>' + COLS.map(c =>
     `<th data-c="${c.id}">${c.name}${c.id === sortCol ? (sortDir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') + '</tr>';
   thead.querySelectorAll('th').forEach(th => th.onclick = () => {
     const c = th.dataset.c;
     if (c === sortCol) sortDir *= -1; else { sortCol = c; sortDir = -1; }
+    page = 0;
     render();
   });
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-  if (page >= pages) page = pages - 1;
-  const pg = rows.slice(page * PAGE, (page + 1) * PAGE);
-  $('tbl').querySelector('tbody').innerHTML =
-    pg.map(rowHtml).join('') || '<tr><td colspan="13" style="text-align:center;color:#888;padding:22px">Нет записей</td></tr>';
-  bindRowEvents();
-  $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
-  $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
-  $('totals').textContent = `${rows.length.toLocaleString('ru-RU')} сделок · ${mln(rows.reduce((s, d) => s + (d.amount || 0), 0))} тг`;
+  
+  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;padding:22px"><div class="loader-spinner"></div> Загрузка...</td></tr>';
+  
+  try {
+    const r = await fetch('/api/deals?' + buildParams().toString(), { signal: renderController.signal });
+    if (!r.ok) {
+        if (r.status === 401) return location.href = '/login';
+        throw new Error('Ошибка ' + r.status);
+    }
+    const res = await r.json();
+    
+    DATA = res.items;
+    const pages = Math.max(1, Math.ceil(res.total / PAGE));
+    if (page >= pages && pages > 0) { page = pages - 1; return render(); }
+    
+    $('tbl').querySelector('tbody').innerHTML =
+      res.items.map(rowHtml).join('') || '<tr><td colspan="13" style="text-align:center;color:#888;padding:22px">Нет записей</td></tr>';
+    bindRowEvents();
+    $('pinfo').textContent = `стр. ${page + 1}/${pages}`;
+    $('prev').disabled = page <= 0; $('next').disabled = page >= pages - 1;
+    $('totals').textContent = `${res.total.toLocaleString('ru-RU')} сделок · ${mln(res.sum)}`;
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="13" style="text-align:center;color:red;padding:22px">Ошибка загрузки данных</td></tr>';
+    }
+  }
 }
 
 function bufferChange(key, field, value) {
@@ -458,178 +424,65 @@ async function showHist(key) {
 
 /* ---------- руководитель ---------- */
 let charts = [];
-function renderBoss() {
-  const base = baseFiltered();
-  const act = base.filter(d => !d.is_closed);
-  const sum = a => a.reduce((s, d) => s + (d.amount || 0), 0);
-  const risk = act.filter(d => d.level === 'risk'), ready = act.filter(d => d.level === 'ready');
-  const errs = base.filter(d => d.level === 'error'), over = act.filter(d => d.overdue_contact);
-  const lost = base.filter(d => d.is_closed && d.level !== 'done');
-  const done = base.filter(d => d.level === 'done');
-  $('bossKpis').innerHTML = `
-    <div class="kpi"><div class="lbl">Активные сделки</div><div class="val">${act.length.toLocaleString('ru-RU')}</div><div class="det">${mln(sum(act))} тг</div></div>
-    <div class="kpi risk"><div class="lbl">🔴 Под риском</div><div class="val">${risk.length}</div><div class="det">${mln(sum(risk))} тг</div></div>
-    <div class="kpi ready"><div class="lbl">🟩 Выдать товар</div><div class="val">${ready.length}</div><div class="det">${mln(sum(ready))} тг</div></div>
-    <div class="kpi warn"><div class="lbl">⏰ Просрочен контакт</div><div class="val">${over.length}</div><div class="det"></div></div>
-    <div class="kpi err"><div class="lbl">🛑 Ошибки заполнения</div><div class="val">${errs.length}</div><div class="det"></div></div>
-    <div class="kpi"><div class="lbl">🟢 Выдано</div><div class="val">${done.length.toLocaleString('ru-RU')}</div><div class="det">${mln(sum(done))} тг</div></div>
-    <div class="kpi"><div class="lbl">⚫ Потеряно</div><div class="val">${lost.length.toLocaleString('ru-RU')}</div><div class="det">${mln(sum(lost))} тг</div></div>`;
-
-  charts.forEach(c => c.destroy()); charts = [];
-  if (!window.Chart) return;
-  const bar = (el, labels, data, color, horizontal) => charts.push(new Chart($(el), {
-    type: 'bar',
-    data: { labels, datasets: [{ data, backgroundColor: color }] },
-    options: {
-      indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: false } },
-      scales: { [horizontal ? 'x' : 'y']: { ticks: { callback: v => (v / 1e6) + ' млн' } } }
-    },
-  }));
-
-  const stages = ['(нет этапа)', ...META.stages];
-  bar('chFunnel', stages, stages.map(s => sum(base.filter(d => (d.stage || '(нет этапа)') === s))), '#3a7ca5');
-
-  const reasons = {};
-  lost.forEach(d => { const r = (d.reject_reason || d.delete_reason || '(без причины)').toLowerCase(); reasons[r] = (reasons[r] || 0) + (d.amount || 0); });
-  const topR = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  bar('chLost', topR.map(x => x[0]), topR.map(x => x[1]), '#8a939d', true);
-
-  const weeks = {};
-  base.forEach(d => {
-    if (!d.doc_date) return;
-    const dt = new Date(d.doc_date);
-    const onejan = new Date(dt.getFullYear(), 0, 1);
-    const w = Math.ceil((((dt - onejan) / 864e5) + onejan.getDay() + 1) / 7);
-    const k = `${dt.getFullYear()}-W${String(w).padStart(2, '0')}`;
-    weeks[k] = (weeks[k] || 0) + (d.amount || 0);
-  });
-  const wk = Object.keys(weeks).sort();
-  bar('chWeeks', wk, wk.map(k => weeks[k]), '#ff6a00');
-
-  const cities = {};
-  base.forEach(d => { const c = d.city || '(пусто)'; (cities[c] = cities[c] || [0, 0])[d.is_closed && d.level === 'done' ? 1 : 0] += d.amount || 0; });
-  const topC = Object.entries(cities).sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 12);
-  charts.push(new Chart($('chCities'), {
-    type: 'bar',
-    data: {
-      labels: topC.map(x => x[0]), datasets: [
-        { label: 'Активные', data: topC.map(x => x[1][0]), backgroundColor: '#3a7ca5' },
-        { label: 'Выдано', data: topC.map(x => x[1][1]), backgroundColor: '#2e9e5b' },
-      ]
-    },
-    options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => (v / 1e6) + ' млн' } } }, plugins: { legend: { position: 'bottom' } } },
-  }));
-
-  // менеджеры
-  const mgr = {};
-  base.forEach(d => {
-    const a = d.author || '(пусто)';
-    const m = mgr[a] = mgr[a] || { n: 0, sum: 0, act: 0, risk: 0, err: 0, over: 0, done: 0 };
-    m.n++; m.sum += d.amount || 0;
-    if (!d.is_closed) m.act++;
-    if (d.level === 'risk') m.risk++;
-    if (d.level === 'error') m.err++;
-    if (d.overdue_contact && !d.is_closed) m.over++;
-    if (d.level === 'done') m.done++;
-  });
-  const rows = Object.entries(mgr).sort((a, b) => b[1].sum - a[1].sum).slice(0, 40);
-  $('tblMgr').querySelector('thead').innerHTML =
-    '<tr><th>Менеджер</th><th>Сделок</th><th>Сумма</th><th>Активные</th><th>Под риском</th><th>Просрочено</th><th>Ошибки</th><th>Выдано</th></tr>';
-  $('tblMgr').querySelector('tbody').innerHTML = rows.map(([a, m]) =>
-    `<tr><td>${esc(a)}</td><td>${m.n}</td><td class="sum">${money(m.sum)}</td><td>${m.act}</td>
-     <td style="color:${m.risk ? '#d63b3b' : '#999'};font-weight:700">${m.risk}</td>
-     <td style="color:${m.over ? '#e6a700' : '#999'};font-weight:700">${m.over}</td>
-     <td style="color:${m.err ? '#c2185b' : '#999'};font-weight:700">${m.err}</td><td>${m.done}</td></tr>`).join('');
-}
-
-/* ---------- режимы и события ---------- */
-let mode = 'mgr';
-document.querySelectorAll('.mode-tab').forEach(b => b.onclick = () => {
-  mode = b.dataset.m;
-  document.querySelectorAll('.mode-tab').forEach(x => x.classList.toggle('act', x === b));
-  $('v-mgr').classList.toggle('hidden', mode !== 'mgr');
-  $('v-analytics').classList.toggle('hidden', mode !== 'analytics');
-  $('v-boss').classList.toggle('hidden', mode !== 'boss');
-  $('v-settings').classList.toggle('hidden', mode !== 'settings');
-  refresh();
-});
-
-function refresh() {
-  if (mode === 'mgr') render();
-  else if (mode === 'analytics') window.initDashboard?.();
-  else if (mode === 'boss') renderBoss();
-  else renderSettings();
-}
-
-function renderSettings() {
-  const tbody = $('tblSpec').querySelector('tbody');
-  const rows = (META.specialists || []).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  tbody.innerHTML = rows.map(s =>
-    `<tr>
-      <td>${esc(s.name)}</td>
-      <td>${esc(s.city)}</td>
-    </tr>`
-  ).join('') || '<tr><td colspan="2">Нет данных</td></tr>';
-}
-
-$('fStage').onchange = () => { localStorage.setItem('fStage', $('fStage').value); updateFilterVisual($('fStage')); page = 0; refresh(); };
-$('fStatus').onchange = () => { localStorage.setItem('fStatus', $('fStatus').value); updateFilterVisual($('fStatus')); page = 0; refresh(); };
-$('fPayment').onchange = () => { localStorage.setItem('fPayment', $('fPayment').value); updateFilterVisual($('fPayment')); page = 0; refresh(); };
-$('fMine').onchange = () => { page = 0; refresh(); };
-$('q').oninput = () => { page = 0; render(); };
-$('fPeriod').onchange = () => {
-  localStorage.setItem('fPeriod', $('fPeriod').value);
-  updateFilterVisual($('fPeriod'));
-  const manual = $('fPeriod').value === 'manual';
-  const el = $('manualDates');
-  if (manual) { el.classList.remove('hidden'); el.style.display = 'flex'; }
-  else { el.classList.add('hidden'); el.style.display = 'none'; }
-  page = 0; refresh();
-};
-$('fFrom').onchange = $('fTo').onchange = () => { page = 0; refresh(); };
-$('myCity').onchange = () => { localStorage.setItem('myCity', $('myCity').value); updateFilterVisual($('myCity')); page = 0; refresh(); };
-$('user').onchange = () => {
-  localStorage.setItem('user', $('user').value);
-  updateFilterVisual($('user'));
-  applyManagerZone();
-  page = 0; refresh();
-};
-$('prev').onclick = () => { page--; render(); };
-$('next').onclick = () => { page++; render(); };
-
-$('btnImport').onclick = async () => {
-  const b = $('btnImport');
-  b.disabled = true; b.textContent = '⏳ Импорт...';
-  // Покажем лоадер в таблице
-  $('tbl').querySelector('tbody').innerHTML = '<tr><td colspan="14" style="padding: 100px 0;"><div class="loader-spinner"></div></td></tr>';
+async function renderBoss() {
+  $('bossKpis').innerHTML = '<div style="padding:22px">Загрузка аналитики...</div>';
   try {
-    const r = await fetch('/api/import', { method: 'POST' });
-    if (r.status === 401) return location.href = '/login';
-    const s = await r.json();
-    if (s.error) throw new Error(s.error);
-    toast(`Импорт: новых ${s.new}, обновлено ${s.updated}`);
-    await loadAll(); refresh();
-  } catch (e) { toast('Импорт не удался: ' + e.message, true); }
-  b.disabled = false; b.textContent = '⟳ Обновить из 1С';
-};
+    const r = await fetch('/api/stats?' + buildParams().toString());
+    const data = await r.json();
+    
+    const kpi = data.kpi;
+    $('bossKpis').innerHTML = `
+      <div class="kpi"><div class="lbl">Активные сделки</div><div class="val">${(kpi.act_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.act_sum||0)} тг</div></div>
+      <div class="kpi risk"><div class="lbl">🔴 Под риском</div><div class="val">${kpi.risk_count||0}</div><div class="det">${mln(kpi.risk_sum||0)} тг</div></div>
+      <div class="kpi ready"><div class="lbl">🟩 Выдать товар</div><div class="val">${kpi.ready_count||0}</div><div class="det">${mln(kpi.ready_sum||0)} тг</div></div>
+      <div class="kpi warn"><div class="lbl">⏰ Просрочен контакт</div><div class="val">${kpi.over_count||0}</div><div class="det"></div></div>
+      <div class="kpi err"><div class="lbl">🛑 Ошибки заполнения</div><div class="val">${kpi.err_count||0}</div><div class="det"></div></div>
+      <div class="kpi"><div class="lbl">🟢 Выдано</div><div class="val">${(kpi.done_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.done_sum||0)} тг</div></div>
+      <div class="kpi"><div class="lbl">⚫ Потеряно</div><div class="val">${(kpi.lost_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.lost_sum||0)} тг</div></div>`;
 
-$('btnLogout').onclick = async () => {
-  await fetch('/api/auth/logout', { method: 'POST' });
-  location.href = '/login';
-};
+    charts.forEach(c => c.destroy()); charts = [];
+    if (!window.Chart) return;
+    const bar = (el, labels, dset, color, horizontal) => charts.push(new Chart($(el), {
+      type: 'bar',
+      data: { labels, datasets: [{ data: dset, backgroundColor: color }] },
+      options: {
+        indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: false } },
+        scales: { [horizontal ? 'x' : 'y']: { ticks: { callback: v => (v / 1e6) + ' млн' } } }
+      },
+    }));
 
-$('btnChangePw').onclick = async () => {
-  const np = $('newPw').value;
-  if (np.length < 4) return toast('Пароль слишком короткий', true);
-  try {
-    const r = await fetch('/api/auth/change-password', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ new_password: np })
-    });
-    if (!r.ok) throw new Error((await r.json()).error);
-    toast('Пароль изменен!');
-    $('pwDlg').close();
-  } catch (e) { toast(e.message, true); }
+    const stages = ['(нет этапа)', ...META.stages];
+    bar('chFunnel', stages, stages.map(s => data.funnel[s] || 0), '#3a7ca5');
+
+    const topR = Object.entries(data.lost).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    bar('chLost', topR.map(x => x[0]), topR.map(x => x[1]), '#8a939d', true);
+
+    const wk = Object.keys(data.weeks).sort();
+    bar('chWeeks', wk, wk.map(k => data.weeks[k]), '#ff6a00');
+
+    const topC = Object.entries(data.cities).sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 12);
+    charts.push(new Chart($('chCities'), {
+      type: 'bar',
+      data: {
+        labels: topC.map(x => x[0]), datasets: [
+          { label: 'Активные', data: topC.map(x => x[1][0]), backgroundColor: '#3a7ca5' },
+          { label: 'Выдано', data: topC.map(x => x[1][1]), backgroundColor: '#2e9e5b' },
+        ]
+      },
+      options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => (v / 1e6) + ' млн' } } }, plugins: { legend: { position: 'bottom' } } },
+    }));
+
+    const rows = Object.entries(data.mgrs).sort((a, b) => b[1].sum - a[1].sum).slice(0, 40);
+    $('tblMgr').querySelector('thead').innerHTML =
+      '<tr><th>Менеджер</th><th>Сделок</th><th>Сумма</th><th>Активные</th><th>Под риском</th><th>Просрочено</th><th>Ошибки</th><th>Выдано</th></tr>';
+    $('tblMgr').querySelector('tbody').innerHTML = rows.map(([a, m]) =>
+      `<tr><td>${esc(a)}</td><td>${m.n}</td><td class="sum">${money(m.sum)}</td><td>${m.act}</td>
+       <td style="color:${m.risk ? '#d63b3b' : '#999'};font-weight:700">${m.risk}</td>
+       <td style="color:${m.over ? '#e6a700' : '#999'};font-weight:700">${m.over}</td>
+       <td style="color:${m.err ? '#c2185b' : '#999'};font-weight:700">${m.err}</td><td>${m.done}</td></tr>`).join('');
+  } catch (e) {
+    $('bossKpis').innerHTML = '<div style="padding:22px;color:red">Ошибка загрузки аналитики</div>';
+  }
 };
 
 loadAll();
