@@ -6,6 +6,23 @@ let queue = 'new', page = 0, sortCol = 'amount', sortDir = -1;
 const PENDING = {};          // key -> { field: value, ... } буфер несохранённых правок
 const PAGE = 50;
 const $ = id => document.getElementById(id);
+
+/* ---------- abort & stale-response infra ---------- */
+let _reqId = 0;              // monotonic request counter — stale guard
+let _globalAC = null;        // single AbortController for ALL list/stats fetches
+
+function freshSignal() {
+  if (_globalAC) _globalAC.abort();
+  _globalAC = new AbortController();
+  return _globalAC.signal;
+}
+
+/* ---------- debounce helpers ---------- */
+let _searchTimer = null;
+function debouncedSearch() {
+  if (_searchTimer) clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => { _searchTimer = null; render(); }, 300);
+}
 const money = n => n == null ? '' : Math.round(n).toLocaleString('ru-RU');
 const mln = n => (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн';
 const esc = s => (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -137,7 +154,7 @@ const QUEUES = [
 let _renderTimer = null;
 function debouncedRender() {
   if (_renderTimer) clearTimeout(_renderTimer);
-  _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 150);
+  _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 120);
 }
 
 function renderQueues() {
@@ -174,7 +191,7 @@ function buildParams() {
   return p;
 }
 
-let renderController = null;
+/* renderController removed — replaced by global freshSignal() */
 
 /* ---------- таблица менеджера ---------- */
 const COLS = [
@@ -259,8 +276,8 @@ function rowHtml(d) {
 const cssKey = k => k.replace(/[^a-zA-Zа-яА-Я0-9]/g, '_');
 
 async function render() {
-  if (renderController) renderController.abort();
-  renderController = new AbortController();
+  const signal = freshSignal();
+  const myId = ++_reqId;
   
   renderQueues();
   const thead = $('tbl').querySelector('thead');
@@ -278,9 +295,12 @@ async function render() {
   try {
     const paramsStr = buildParams().toString();
     const [rDeals, rSummary] = await Promise.all([
-      fetch('/api/deals?' + paramsStr, { signal: renderController.signal }),
-      fetch('/api/deals/summary?' + paramsStr, { signal: renderController.signal })
+      fetch('/api/deals?' + paramsStr, { signal }),
+      fetch('/api/deals/summary?' + paramsStr, { signal })
     ]);
+
+    // stale guard — a newer request was already fired
+    if (myId !== _reqId) return;
 
     if (!rDeals.ok || !rSummary.ok) {
         if (rDeals.status === 401 || rSummary.status === 401) return location.href = '/login';
@@ -289,6 +309,9 @@ async function render() {
     const res = await rDeals.json();
     const summary = await rSummary.json();
     
+    // second stale check after JSON parsing
+    if (myId !== _reqId) return;
+
     DATA = res.items;
     const pages = Math.max(1, Math.ceil(summary.total / PAGE));
     if (page >= pages && pages > 0) { page = pages - 1; return render(); }
@@ -436,11 +459,16 @@ async function showHist(key) {
 
 /* ---------- руководитель ---------- */
 let charts = [];
+let _bossReqId = 0;
 async function renderBoss() {
+  const signal = freshSignal();
+  const myId = ++_bossReqId;
   $('bossKpis').innerHTML = '<div style="padding:22px">Загрузка аналитики...</div>';
   try {
-    const r = await fetch('/api/stats?' + buildParams().toString());
+    const r = await fetch('/api/stats?' + buildParams().toString(), { signal });
+    if (myId !== _bossReqId) return;
     const data = await r.json();
+    if (myId !== _bossReqId) return;
     
     const kpi = data.kpi;
     $('bossKpis').innerHTML = `
@@ -493,13 +521,19 @@ async function renderBoss() {
        <td style="color:${m.over ? '#e6a700' : '#999'};font-weight:700">${m.over}</td>
        <td style="color:${m.err ? '#c2185b' : '#999'};font-weight:700">${m.err}</td><td>${m.done}</td></tr>`).join('');
   } catch (e) {
-    $('bossKpis').innerHTML = '<div style="padding:22px;color:red">Ошибка загрузки аналитики</div>';
+    if (e.name !== 'AbortError') {
+      $('bossKpis').innerHTML = '<div style="padding:22px;color:red">Ошибка загрузки аналитики</div>';
+    }
   }
 };
 
 /* ---------- переключение вкладок ---------- */
 let currentMode = 'mgr';
 function switchMode(mode) {
+  // abort any in-flight requests from the previous tab
+  if (_globalAC) _globalAC.abort();
+  _globalAC = null;
+
   currentMode = mode;
   document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('act'));
   document.querySelector(`.mode-tab[data-m="${mode}"]`).classList.add('act');
@@ -573,7 +607,7 @@ $('fTo').onchange = () => { page = 0; debouncedRender(); };
 
 $('q').oninput = () => {
   page = 0;
-  debouncedRender();
+  debouncedSearch();
 };
 
 /* ---------- пагинация ---------- */
@@ -619,15 +653,18 @@ $('btnLogout').onclick = async () => {
 
 /* ---------- настройки ---------- */
 async function renderSettings() {
+  const signal = freshSignal();
   const tbody = $('tblSpec').querySelector('tbody');
   tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;padding:22px"><div class="loader-spinner"></div></td></tr>';
   try {
-    const specialists = await fetch('/api/meta').then(r => r.json()).then(m => m.specialists || []);
+    const specialists = await fetch('/api/meta', { signal }).then(r => r.json()).then(m => m.specialists || []);
     tbody.innerHTML = specialists.map(s => 
       `<tr><td>${esc(s.name)}</td><td>${esc(s.city)}</td></tr>`
     ).join('') || '<tr><td colspan="2" style="text-align:center;color:#888;padding:22px">Нет специалистов</td></tr>';
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:red;padding:22px">Ошибка загрузки</td></tr>';
+    if (e.name !== 'AbortError') {
+      tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:red;padding:22px">Ошибка загрузки</td></tr>';
+    }
   }
 }
 
