@@ -74,6 +74,14 @@ import threading
 
 _local_db = threading.local()
 
+def close_db(e=None):
+    if hasattr(_local_db, "con"):
+        try:
+            _local_db.con.con.close()
+        except Exception:
+            pass
+        del _local_db.con
+
 def get_db() -> DbWrapper:
     db_url = os.getenv("DATABASE_URL", "")
     

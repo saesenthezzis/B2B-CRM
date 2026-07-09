@@ -22,13 +22,18 @@ from flask import Flask, jsonify, request, send_from_directory, session, redirec
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import core
-from infrastructure.database import get_db
+from infrastructure.database import get_db, close_db as infra_close_db
 from infrastructure.repositories.deal_repository import DealRepository
 from application.services.deal_service import DealService
 from application.services.stats_service import StatsService
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-rmko-key-12345")
+
+@app.teardown_appcontext
+def teardown_db(exception):
+    infra_close_db(exception)
+    core.close_db(exception)
 
 def login_required(f):
     @wraps(f)

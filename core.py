@@ -278,6 +278,15 @@ def db():
     return con
 
 
+def close_db(e=None):
+    if hasattr(_local_db, "con"):
+        try:
+            _local_db.con.con.close()
+        except Exception:
+            pass
+        del _local_db.con
+
+
 # ---------------- утилиты ----------------
 
 def clean_text(v):
