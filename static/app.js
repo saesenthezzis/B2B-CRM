@@ -53,8 +53,8 @@ async function loadAll() {
     });
     fillUserSelect();
     fillCitySelect();
-    fillSelect($('fStage'), m.stages.map(s => 'Этап: ' + s).concat(['(пусто)']), localStorage.getItem('fStage') || '');
     
+
     if (localStorage.getItem('fPeriod')) $('fPeriod').value = localStorage.getItem('fPeriod');
     if (localStorage.getItem('fStatus')) $('fStatus').value = localStorage.getItem('fStatus');
     if (localStorage.getItem('fPayment')) $('fPayment').value = localStorage.getItem('fPayment');
@@ -84,14 +84,7 @@ function fillSelect(sel, vals, chosen) {
   sel.innerHTML = ''; sel.appendChild(first);
   vals.forEach(v => {
     const o = document.createElement('option');
-    // For stage filter, separate display text from value
-    if (sel.id === 'fStage' && v !== '(пусто)' && v.startsWith('Этап: ')) {
-      o.textContent = v;
-      o.value = v.replace('Этап: ', '');
-      if (o.value === chosen) o.selected = true;
-    } else {
-      o.textContent = v; if (v === chosen) o.selected = true;
-    }
+    o.textContent = v; if (v === chosen) o.selected = true;
     sel.appendChild(o);
   });
   updateFilterVisual(sel);
@@ -174,7 +167,6 @@ function buildParams() {
   const p = new URLSearchParams();
   p.set('queue', queue);
   p.set('city', $('myCity').value);
-  p.set('stage', $('fStage').value);
   p.set('status', $('fStatus').value);
   p.set('payment', $('fPayment').value);
   p.set('mine', $('fMine').checked);
@@ -200,7 +192,6 @@ const COLS = [
   { id: 'doc_num', name: 'Документ' },
   { id: 'client', name: 'Клиент' },
   { id: 'hint', name: 'Действие' },
-  { id: 'stage', name: 'Этап' },
   { id: 'amount', name: 'Сумма' },
   { id: 'in_stock', name: 'Товар' },
   { id: 'plan_contact', name: 'Срок' },
@@ -228,22 +219,7 @@ function paymentBadge(d) {
   return `<span class="payment-badge">${label}</span>`;
 }
 
-function autoStageLabel(d) {
-  const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
-  if (['Не состоялась', 'Удалён', 'Заменена', 'Сервис'].includes(d.stage)) return d.stage;
-  if (d.cur_status === 'Удалён' || d.cur_status === 'Удален') return 'Удалено в 1С';
-  if (d.cur_status === 'Выдан') return 'Закрыто';
-  if (d.cur_status === 'Резерв' && paid) return 'Оплата есть';
-  if (d.cur_status === 'Резерв') return 'Ожидаем оплату';
-  return d.stage || 'В работе';
-}
 
-function stageCell(d) {
-  if (['Резерв', 'Выдан', 'Удалён', 'Удален'].includes(d.cur_status)) {
-    return `<span class="auto-stage">${esc(autoStageLabel(d))}</span>`;
-  }
-  return selectHtml(d, 'stage', META.stages);
-}
 
 function rowHtml(d) {
   const stClass = d.cur_status === 'Выдан' ? 'st-issued' : d.cur_status === 'Удален' ? 'st-deleted' : 'st-reserve';
@@ -262,7 +238,6 @@ function rowHtml(d) {
     <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td>${actionMark}<span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span></td>
-    <td>${stageCell(d)}</td>
     <td class="sum">${paymentBadge(d)}<span class="amount-text">${money(d.amount)}</span></td>
     <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено"], false, inStockDisabled)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
@@ -491,8 +466,7 @@ async function renderBoss() {
       },
     }));
 
-    const stages = ['(нет этапа)', ...META.stages];
-    bar('chFunnel', stages, stages.map(s => data.funnel[s] || 0), '#3a7ca5');
+
 
     const topR = Object.entries(data.lost).sort((a, b) => b[1] - a[1]).slice(0, 10);
     bar('chLost', topR.map(x => x[0]), topR.map(x => x[1]), '#8a939d', true);
@@ -583,13 +557,6 @@ $('fStatus').onchange = () => {
   debouncedRender();
 };
 
-$('fStage').onchange = () => {
-  localStorage.setItem('fStage', $('fStage').value);
-  updateFilterVisual($('fStage'));
-  page = 0;
-  debouncedRender();
-};
-
 $('fPayment').onchange = () => {
   localStorage.setItem('fPayment', $('fPayment').value);
   updateFilterVisual($('fPayment'));
@@ -621,27 +588,6 @@ $('next').onclick = () => {
 };
 
 /* ---------- импорт и выход ---------- */
-$('btnImport').onclick = async () => {
-  if (!confirm('Обновить данные из 1С? Это может занять несколько минут.')) return;
-  $('btnImport').disabled = true;
-  $('btnImport').textContent = 'Загрузка...';
-  try {
-    const r = await fetch('/api/import', { method: 'POST' });
-    const data = await r.json();
-    if (r.ok) {
-      toast(`Импорт завершен: ${data.new || 0} новых, ${data.updated || 0} обновлено`);
-      loadAll();
-    } else {
-      toast('Ошибка импорта: ' + (data.error || r.status), true);
-    }
-  } catch (e) {
-    toast('Ошибка импорта: ' + e.message, true);
-  } finally {
-    $('btnImport').disabled = false;
-    $('btnImport').textContent = '⟳ Обновить из 1С';
-  }
-};
-
 $('btnLogout').onclick = async () => {
   try {
     await fetch('/api/auth/logout', { method: 'POST' });

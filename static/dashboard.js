@@ -68,8 +68,7 @@
     }
     const cities = checkedVals('dashCityList');
     if (cities) rows = rows.filter(d => cities.includes(d.city || ''));
-    const stages = checkedVals('dashStageList');
-    if (stages) rows = rows.filter(d => stages.includes(d.stage || ''));
+
     return rows;
   }
 
@@ -78,8 +77,7 @@
     const data = typeof DATA !== 'undefined' ? DATA : [];
     buildList('dashCityList',
       [...new Set(data.map(d => d.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')));
-    buildList('dashStageList',
-      [...new Set(data.map(d => d.stage).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru')));
+
     filtersReady = true;
   }
   function buildList(id, items) {

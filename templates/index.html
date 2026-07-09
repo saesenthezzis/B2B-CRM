@@ -51,7 +51,7 @@
   </div>
 
   <div class="app-nav__group">
-    <button class="aether-btn" id="btnImport" title="Перечитать xlsx-файл выгрузки">⟳ Обновить из 1С</button>
+
     <button class="aether-btn aether-btn--danger" id="btnLogout">Выйти</button>
   </div>
 
@@ -90,9 +90,7 @@
         <option value="Удален">Статус: удален</option>
       </select>
 
-      <select class="aether-select" id="fStage">
-        <option value="">Этап: все</option>
-      </select>
+
 
       <select class="aether-select" id="fPayment">
         <option value="">Оплата: все</option>
@@ -148,7 +146,6 @@
   <section id="v-boss" class="hidden">
     <div class="kpis" id="bossKpis"></div>
     <div class="grid2">
-      <div class="card"><h3>Воронка по этапам (сумма)</h3><canvas id="chFunnel"></canvas></div>
       <div class="card"><h3>Потери по причинам (без продажи, сумма)</h3><canvas id="chLost"></canvas></div>
     </div>
     <div class="grid2">
@@ -190,10 +187,7 @@
           <div class="dash-filter__title">Город</div>
           <div class="dash-filter__list" id="dashCityList"></div>
         </div>
-        <div class="dash-filter">
-          <div class="dash-filter__title">Этап сделки</div>
-          <div class="dash-filter__list" id="dashStageList"></div>
-        </div>
+
       </aside>
 
       <!-- Main content -->
