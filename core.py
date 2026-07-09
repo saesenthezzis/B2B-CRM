@@ -91,9 +91,19 @@ class _DbWrapper:
                 return self.con.execute(sql, params)
             return self.con.execute(sql)
         else:
-            args = params if params is not None else []
-            result = self.client.execute(sql, args)
-            return _DummyCursor(result)
+            try:
+                if isinstance(params, dict):
+                    stmt = libsql_client.Statement(sql, params)
+                    result = self.client.execute(stmt)
+                else:
+                    args = params if params is not None else []
+                    result = self.client.execute(sql, args)
+                return _DummyCursor(result)
+            except Exception as e:
+                import traceback
+                print(f"[TURSO ERROR] SQL: {sql} | Params: {params}")
+                traceback.print_exc()
+                raise
 
     def executescript(self, sql_script):
         if self.is_sqlite:

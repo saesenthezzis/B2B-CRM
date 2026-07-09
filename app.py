@@ -80,60 +80,56 @@ def meta():
 @app.get("/api/deals")
 @login_required
 def deals():
-    try:
-        con = core.db()
+    con = core.db()
+    
+    user_name = session.get("username", "")
+    zone_cities = []
+    if user_name:
+        specialists = core.load_specialists(con)
+        for s in specialists:
+            if s["name"] == user_name and s["city"]:
+                zone_cities.append(s["city"])
+                
+    where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
+    
+    sort_col = request.args.get("sortCol", "amount")
+    sort_dir = int(request.args.get("sortDir", "-1"))
+    
+    order_by = sort_col
+    if sort_col == "status":
+        order_by = f"({core.SQL_LEVEL})"
+    elif sort_col not in ("amount", "client", "doc_date", "stage", "city", "doc_num", "in_stock", "plan_contact", "notes", "author"):
+        order_by = "amount"
         
-        user_name = session.get("username", "")
-        zone_cities = []
-        if user_name:
-            specialists = core.load_specialists(con)
-            for s in specialists:
-                if s["name"] == user_name and s["city"]:
-                    zone_cities.append(s["city"])
-                    
-        where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
+    direction = "DESC" if sort_dir == -1 else "ASC"
+    order_clause = f"ORDER BY {order_by} {direction}"
+    
+    page = int(request.args.get("page", "0"))
+    limit = 50
+    offset = page * limit
+    
+    query = f"SELECT * FROM deals WHERE {where_sql} {order_clause} LIMIT {limit} OFFSET {offset}"
+    rows = [dict(r) for r in con.execute(query, params)]
+    
+    count_res = list(con.execute(f"SELECT COUNT(*) as c FROM deals WHERE {where_sql}", params))
+    total = count_res[0]["c"] if count_res else 0
+    
+    sum_res = list(con.execute(f"SELECT SUM(amount) as s FROM deals WHERE {where_sql}", params))
+    total_sum = sum_res[0]["s"] if sum_res and sum_res[0]["s"] is not None else 0
+    
+    user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
+    
+    out = []
+    for d in rows:
+        d.update(core.derive(d, user_action_keys=user_action_keys))
+        out.append(d)
         
-        sort_col = request.args.get("sortCol", "amount")
-        sort_dir = int(request.args.get("sortDir", "-1"))
-        
-        order_by = sort_col
-        if sort_col == "status":
-            order_by = f"({core.SQL_LEVEL})"
-        elif sort_col not in ("amount", "client", "doc_date", "stage", "city", "doc_num", "in_stock", "plan_contact", "notes", "author"):
-            order_by = "amount"
-            
-        direction = "DESC" if sort_dir == -1 else "ASC"
-        order_clause = f"ORDER BY {order_by} {direction}"
-        
-        page = int(request.args.get("page", "0"))
-        limit = 50
-        offset = page * limit
-        
-        query = f"SELECT * FROM deals WHERE {where_sql} {order_clause} LIMIT {limit} OFFSET {offset}"
-        rows = [dict(r) for r in con.execute(query, params)]
-        
-        count_res = list(con.execute(f"SELECT COUNT(*) as c FROM deals WHERE {where_sql}", params))
-        total = count_res[0]["c"] if count_res else 0
-        
-        sum_res = list(con.execute(f"SELECT SUM(amount) as s FROM deals WHERE {where_sql}", params))
-        total_sum = sum_res[0]["s"] if sum_res and sum_res[0]["s"] is not None else 0
-        
-        user_action_keys = {r["deal_key"] for r in con.execute("SELECT DISTINCT deal_key FROM history WHERE user != '1С-импорт'")}
-        
-        out = []
-        for d in rows:
-            d.update(core.derive(d, user_action_keys=user_action_keys))
-            out.append(d)
-            
-        return jsonify({
-            "items": out,
-            "total": total,
-            "sum": total_sum
-        })
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "items": out,
+        "total": total,
+        "sum": total_sum
+    })
+
 
 @app.get("/api/stats")
 @login_required
