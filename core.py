@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS allowed_emails (
 );
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
+CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key);
 """
 
 # Миграции для добавления новых колонок в существующую БД
@@ -222,6 +223,7 @@ _MIGRATIONS = [
     "ALTER TABLE deals ADD COLUMN payment_date TEXT",
     "ALTER TABLE deals ADD COLUMN has_payment INTEGER DEFAULT 0",
     "ALTER TABLE deals ADD COLUMN invoice_basis TEXT",
+    "CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key)",
 ]
 
 # Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
