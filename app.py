@@ -121,12 +121,12 @@ def stats():
         repo = DealRepository(db)
         service = StatsService(repo)
         
-        user_name = session.get("username", "")
+        target_user = request.args.get("me") or session.get("username", "")
         zone_cities = []
-        if user_name:
+        if target_user:
             specialists = core.load_specialists(db)
             for s in specialists:
-                if s["name"] == user_name and s["city"]:
+                if s["name"] == target_user and s["city"]:
                     zone_cities.append(s["city"])
                     
         where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
@@ -377,13 +377,13 @@ def dashboard_data():
     period = request.args.get("period", "month")
     group_by = request.args.get("groupBy", "city")
 
-    user_name = session.get("username", "")
+    target_user = request.args.get("me") or session.get("username", "")
     db = get_db()
     zone_cities = []
-    if user_name:
+    if target_user:
         specialists = core.load_specialists(db)
         for s in specialists:
-            if s["name"] == user_name and s["city"]:
+            if s["name"] == target_user and s["city"]:
                 zone_cities.append(s["city"])
                 
     where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)

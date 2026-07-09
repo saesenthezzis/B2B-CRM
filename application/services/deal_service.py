@@ -12,11 +12,12 @@ class DealService:
         # but in a complete refactor, specialist loading should be in a SpecialistService.
         con = self.repo.db
         
+        target_user = request_args.get("me") or user_name
         zone_cities = []
-        if user_name:
+        if target_user:
             specialists = core.load_specialists(con)
             for s in specialists:
-                if s["name"] == user_name and s["city"]:
+                if s["name"] == target_user and s["city"]:
                     zone_cities.append(s["city"])
                     
         where_sql, params = core.build_filters_sql(request_args, zone_cities=zone_cities)
@@ -56,11 +57,13 @@ class DealService:
 
     def get_deals_summary(self, user_name, request_args):
         con = self.repo.db
+        
+        target_user = request_args.get("me") or user_name
         zone_cities = []
-        if user_name:
+        if target_user:
             specialists = core.load_specialists(con)
             for s in specialists:
-                if s["name"] == user_name and s["city"]:
+                if s["name"] == target_user and s["city"]:
                     zone_cities.append(s["city"])
                     
         where_sql, params = core.build_filters_sql(request_args, zone_cities=zone_cities)
