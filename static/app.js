@@ -448,15 +448,20 @@ async function renderBoss() {
     const data = await r.json();
     if (myId !== _bossReqId) return;
     
-    const kpi = data.kpi;
+    const perf = Object.values(data.performance || {});
+    let totalActions = 0, totalDeals = new Set(), totalNotes = 0, totalStages = 0;
+    
+    perf.forEach(p => {
+      totalActions += p.total_actions;
+      totalNotes += p.notes_added;
+      totalStages += p.stages_changed;
+    });
+
     $('bossKpis').innerHTML = `
-      <div class="kpi"><div class="lbl">Активные сделки</div><div class="val">${(kpi.act_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.act_sum||0)} тг</div></div>
-      <div class="kpi risk"><div class="lbl">🔴 Под риском</div><div class="val">${kpi.risk_count||0}</div><div class="det">${mln(kpi.risk_sum||0)} тг</div></div>
-      <div class="kpi ready"><div class="lbl">🟩 Выдать товар</div><div class="val">${kpi.ready_count||0}</div><div class="det">${mln(kpi.ready_sum||0)} тг</div></div>
-      <div class="kpi warn"><div class="lbl">⏰ Просрочен контакт</div><div class="val">${kpi.over_count||0}</div><div class="det"></div></div>
-      <div class="kpi err"><div class="lbl">🛑 Ошибки заполнения</div><div class="val">${kpi.err_count||0}</div><div class="det"></div></div>
-      <div class="kpi"><div class="lbl">🟢 Выдано</div><div class="val">${(kpi.done_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.done_sum||0)} тг</div></div>
-      <div class="kpi"><div class="lbl">⚫ Потеряно</div><div class="val">${(kpi.lost_count||0).toLocaleString('ru-RU')}</div><div class="det">${mln(kpi.lost_sum||0)} тг</div></div>`;
+      <div class="kpi"><div class="lbl">Всего действий</div><div class="val">${totalActions}</div><div class="det">за период</div></div>
+      <div class="kpi"><div class="lbl">Сотрудников</div><div class="val">${perf.length}</div><div class="det">активных</div></div>
+      <div class="kpi"><div class="lbl">Смена этапов</div><div class="val">${totalStages}</div><div class="det">движение сделок</div></div>
+      <div class="kpi"><div class="lbl">Заметки</div><div class="val">${totalNotes}</div><div class="det">коммуникации</div></div>`;
 
     charts.forEach(c => c.destroy()); charts = [];
     if (!window.Chart) return;
@@ -465,38 +470,51 @@ async function renderBoss() {
       data: { labels, datasets: [{ data: dset, backgroundColor: color }] },
       options: {
         indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: false } },
-        scales: { [horizontal ? 'x' : 'y']: { ticks: { callback: v => (v / 1e6) + ' млн' } } }
+        scales: { [horizontal ? 'x' : 'y']: { beginAtZero: true } }
       },
     }));
 
+    // Bar chart: Actions by user
+    const topUsers = perf.sort((a, b) => b.total_actions - a.total_actions).slice(0, 15);
+    bar('chActionsBar', topUsers.map(u => u.user), topUsers.map(u => u.total_actions), '#3a7ca5', true);
 
-
-    const topR = Object.entries(data.lost).sort((a, b) => b[1] - a[1]).slice(0, 10);
-    bar('chLost', topR.map(x => x[0]), topR.map(x => x[1]), '#8a939d', true);
-
-    const wk = Object.keys(data.weeks).sort();
-    bar('chWeeks', wk, wk.map(k => data.weeks[k]), '#ff6a00');
-
-    const topC = Object.entries(data.cities).sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 12);
-    charts.push(new Chart($('chCities'), {
-      type: 'bar',
+    // Trend chart: Actions by day
+    const dailyMap = {};
+    (data.daily || []).forEach(d => {
+      if (!dailyMap[d.date]) dailyMap[d.date] = 0;
+      dailyMap[d.date] += d.actions;
+    });
+    const trendDates = Object.keys(dailyMap).sort();
+    
+    charts.push(new Chart($('chActionsTrend'), {
+      type: 'line',
       data: {
-        labels: topC.map(x => x[0]), datasets: [
-          { label: 'Активные', data: topC.map(x => x[1][0]), backgroundColor: '#3a7ca5' },
-          { label: 'Выдано', data: topC.map(x => x[1][1]), backgroundColor: '#2e9e5b' },
-        ]
+        labels: trendDates,
+        datasets: [{
+          label: 'Действий',
+          data: trendDates.map(d => dailyMap[d]),
+          borderColor: '#ff6a00',
+          backgroundColor: 'rgba(255, 106, 0, 0.1)',
+          fill: true,
+          tension: 0.3
+        }]
       },
-      options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => (v / 1e6) + ' млн' } } }, plugins: { legend: { position: 'bottom' } } },
+      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } }
     }));
 
-    const rows = Object.entries(data.mgrs).sort((a, b) => b[1].sum - a[1].sum).slice(0, 40);
+    // Managers table
     $('tblMgr').querySelector('thead').innerHTML =
-      '<tr><th>Менеджер</th><th>Сделок</th><th>Сумма</th><th>Активные</th><th>Под риском</th><th>Просрочено</th><th>Ошибки</th><th>Выдано</th></tr>';
-    $('tblMgr').querySelector('tbody').innerHTML = rows.map(([a, m]) =>
-      `<tr><td>${esc(a)}</td><td>${m.n}</td><td class="sum">${money(m.sum)}</td><td>${m.act}</td>
-       <td style="color:${m.risk ? '#d63b3b' : '#999'};font-weight:700">${m.risk}</td>
-       <td style="color:${m.over ? '#e6a700' : '#999'};font-weight:700">${m.over}</td>
-       <td style="color:${m.err ? '#c2185b' : '#999'};font-weight:700">${m.err}</td><td>${m.done}</td></tr>`).join('');
+      '<tr><th>Менеджер</th><th>Действий</th><th>Уникальных сделок</th><th>Смена этапов</th><th>Заметок</th><th>Отметки об оплате</th><th>Склад проверен</th></tr>';
+    $('tblMgr').querySelector('tbody').innerHTML = topUsers.map(u =>
+      `<tr>
+        <td><b>${esc(u.user)}</b></td>
+        <td>${u.total_actions}</td>
+        <td>${u.deals_touched}</td>
+        <td>${u.stages_changed}</td>
+        <td>${u.notes_added}</td>
+        <td>${u.payments_marked}</td>
+        <td>${u.stock_checked}</td>
+       </tr>`).join('');
   } catch (e) {
     if (e.name !== 'AbortError') {
       $('bossKpis').innerHTML = '<div style="padding:22px;color:red">Ошибка загрузки аналитики</div>';

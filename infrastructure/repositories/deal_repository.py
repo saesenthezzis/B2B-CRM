@@ -105,3 +105,36 @@ class DealRepository:
     def get_dashboard_rating(self, where_sql, params):
         query = f"SELECT COALESCE(client, '(не указано)') as label, SUM(amount) as val FROM deals WHERE {where_sql} GROUP BY label ORDER BY val DESC LIMIT 10"
         return list(self.db.execute(query, params))
+
+    def get_user_performance_stats(self, where_sql, params):
+        query = f'''
+        SELECT 
+            h.user as user,
+            COUNT(*) as total_actions,
+            COUNT(DISTINCT h.deal_key) as deals_touched,
+            SUM(CASE WHEN h.field='notes' THEN 1 ELSE 0 END) as notes_added,
+            SUM(CASE WHEN h.field='stage' THEN 1 ELSE 0 END) as stages_changed,
+            SUM(CASE WHEN h.field='has_payment' AND h.new_val IN ('1', 'True', 'true', 'Да') THEN 1 ELSE 0 END) as payments_marked,
+            SUM(CASE WHEN h.field='in_stock' AND h.new_val='Проверено' THEN 1 ELSE 0 END) as stock_checked
+        FROM history h
+        JOIN deals d ON h.deal_key = d.key
+        WHERE {where_sql} AND h.user != '1С-импорт'
+        GROUP BY h.user
+        '''
+        rows = list(self.db.execute(query, params))
+        return {r["user"]: dict(r) for r in rows}
+
+    def get_user_daily_activity(self, where_sql, params):
+        query = f'''
+        SELECT 
+            h.user as user,
+            substr(h.ts, 1, 10) as date,
+            COUNT(*) as actions
+        FROM history h
+        JOIN deals d ON h.deal_key = d.key
+        WHERE {where_sql} AND h.user != '1С-импорт'
+        GROUP BY h.user, substr(h.ts, 1, 10)
+        ORDER BY substr(h.ts, 1, 10) ASC
+        '''
+        rows = list(self.db.execute(query, params))
+        return [dict(r) for r in rows]
