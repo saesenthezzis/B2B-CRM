@@ -211,12 +211,15 @@ function selectHtml(d, field, options, allowEmpty = true, disabled = false) {
 }
 
 function paymentBadge(d) {
-  const paid = Boolean(d.has_payment) || Number(d.payment_amount || 0) > 0 || Boolean(d.payment_date);
-  if (!paid) return '';
+  if (d.has_payment == 1) {
+    return `<span class="payment-badge">Оплачено</span>`;
+  }
   const amount = Number(d.amount || 0);
   const paidAmount = Number(d.payment_amount || 0);
-  const label = amount && paidAmount && paidAmount < amount ? 'Частично' : 'Оплачено';
-  return `<span class="payment-badge">${label}</span>`;
+  if (paidAmount > 0 && paidAmount < amount) {
+    return `<span class="payment-badge">Частично</span>`;
+  }
+  return '';
 }
 
 

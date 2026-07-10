@@ -636,8 +636,8 @@ def derive(d, today=None, user_action_keys=None):
     """Вычислить производные поля сделки по правилам ИнструкцииДляMain."""
     today = today or date.today()
     st = cur_status(d)
-    stage = d["stage"] or ""
-    paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
+    stage = d.get("stage") or ""
+    paid = bool(d.get("has_payment"))
     
     in_stock_val = d.get("in_stock") or "Ожидает проверки"
     # Автоматическое изменение in_stock на основе status_1c
@@ -757,7 +757,7 @@ def compute_deal_level(d, today=None):
     today = today or date.today()
     st = cur_status(d)
     stage = d.get("stage") or ""
-    paid = bool(d.get("has_payment")) or bool(d.get("payment_amount")) or bool(d.get("payment_date"))
+    paid = bool(d.get("has_payment"))
     
     in_stock_val = d.get("in_stock") or "Ожидает проверки"
     if st in ("Удален", "Удалён"):
@@ -1196,7 +1196,7 @@ CASE
 END
 '''
 
-SQL_IS_PAID = "(has_payment = 1 OR COALESCE(payment_amount, 0) > 0 OR payment_date IS NOT NULL)"
+SQL_IS_PAID = "has_payment = 1"
 
 SQL_LEVEL = f'''
 CASE
