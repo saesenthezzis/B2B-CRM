@@ -26,3 +26,4 @@ test_*.py
 /rules
 /.agents
 /.agent
+/.local_archive/
