@@ -273,13 +273,40 @@ class CSVFileHandler(FileSystemEventHandler):
             log.info("Обнаружен новый файл: %s", event.src_path)
 
 
+def wait_for_file_stability(file_path, wait_time=SYNC_DELAY, max_wait=300):
+    """Ждет пока размер файла не перестанет меняться в течение wait_time секунд."""
+    log.info("Проверка стабильности файла: %s", file_path)
+    start_wait = time.time()
+    last_size = -1
+    last_change_time = time.time()
+    
+    while True:
+        try:
+            current_size = os.path.getsize(file_path)
+            if current_size != last_size:
+                last_size = current_size
+                last_change_time = time.time()
+            elif time.time() - last_change_time >= wait_time:
+                # Размер не менялся wait_time секунд
+                return True
+                
+            if time.time() - start_wait > max_wait:
+                log.warning("Таймаут ожидания стабильности файла (прошло %d сек)", max_wait)
+                return False
+                
+        except OSError as e:
+            # Файл может быть временно недоступен (например, эксклюзивная блокировка 1С)
+            last_change_time = time.time()
+            
+        time.sleep(1)
+
 def run_continuous_monitor():
     """Непрерывный мониторинг папки с помощью watchdog."""
     log.info("=" * 60)
     log.info("Запуск непрерывного мониторинга")
     log.info("Сетевая папка: %s", NETWORK_PATH)
     log.info("Имя файла: %s", FILE_NAME)
-    log.info("Задержка перед синхронизацией: %d сек", SYNC_DELAY)
+    log.info("Задержка стабильности: %d сек", SYNC_DELAY)
     log.info("Нажмите Ctrl+C для остановки")
     
     # Проверяем доступность папки перед стартом
@@ -305,9 +332,18 @@ def run_continuous_monitor():
                 # Ждем пока файл перестанет изменяться (SYNC_DELAY)
                 if time_since_last_event >= SYNC_DELAY:
                     event_handler.pending_sync = False
-                    log.info("Выполняем синхронизацию...")
-                    run_sync()
-                    log.info("Ожидание следующих изменений...")
+                    
+                    target_file = os.path.join(NETWORK_PATH, FILE_NAME)
+                    if not os.path.exists(target_file):
+                        # Ищем по паттерну, если точное имя не найдено
+                        target_file = find_export_file()
+                        
+                    if target_file and wait_for_file_stability(target_file, SYNC_DELAY):
+                        log.info("Файл стабилен. Выполняем синхронизацию...")
+                        run_sync()
+                        log.info("Ожидание следующих изменений...")
+                    else:
+                        log.warning("Файл не стабилизировался или не найден, пропускаем...")
                     
     except KeyboardInterrupt:
         log.info("Получен сигнал остановки...")

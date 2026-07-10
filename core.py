@@ -293,7 +293,6 @@ CREATE TABLE IF NOT EXISTS deals (
     check_status TEXT, in_stock TEXT DEFAULT 'Ожидает проверки', closing_docs INTEGER, delivery TEXT,
     contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
     flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
-    updated_at TEXT, updated_by TEXT,
     computed_status TEXT, computed_level TEXT
 );
 CREATE TABLE IF NOT EXISTS history (
@@ -909,6 +908,8 @@ TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c", "deleted", "posted
               "reserved", "client", "status_1c", "payment_amount", "has_payment",
               "payment_source", "payment_date", "invoice_basis"]
 
+FLAG_TRIGGERS = {"amount", "doc_date", "status_1c", "payment_amount", "has_payment", "payment_date"}
+
 # Колонки, загружаемые при старте импорта — только те, что нужны в _process_import_df
 _EXISTING_COLS = (
     "key, territory, city, branch, author, doc, amount, doc_date, "
@@ -1017,16 +1018,22 @@ def _process_import_df(df, con, existing, stats, now, first, seen):
                 if nv is not None and (old.get(c) is None or old.get(c) == ""):
                     changes[c] = nv
             if changes:
-                tracked_changed = any(c in TRACKED_1C for c in changes)
-                if tracked_changed and old.get("flag") != "NEW":
-                    changes["flag"] = "UPDATE"
-                    changes["fixed_at"] = now
-                    for c in changes:
-                        if c in TRACKED_1C:
-                            stmts.append((
-                                "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) "
-                                "VALUES (?,?,?,?,?,?)",
-                                (key, c, str(old.get(c)), str(changes[c]), "1С-импорт", now)))
+                old_status = old.get("status_1c")
+                new_status = changes.get("status_1c", old_status)
+                is_closed = old_status in ("Выдан", "Удален", "Удалён") and new_status in ("Выдан", "Удален", "Удалён")
+                
+                if not is_closed:
+                    flag_changed = any(c in FLAG_TRIGGERS for c in changes)
+                    if flag_changed and old.get("flag") != "NEW":
+                        changes["flag"] = "UPDATE"
+                        changes["fixed_at"] = now
+                        
+                for c in changes:
+                    if c in TRACKED_1C:
+                        stmts.append((
+                            "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (key, c, str(old.get(c)), str(changes[c]), "1С-импорт", now)))
                 sets = ", ".join(f"{c}=:{c}" for c in changes)
                 changes["key"] = key
                 stmts.append((f"UPDATE deals SET {sets} WHERE key=:key", changes))
@@ -1057,8 +1064,12 @@ def _finalize_import(con, now):
         ),
         (
             """UPDATE deals SET stage='Закрыто', in_stock='Товар есть',
-                      check_status='Закрыто автоматически'
+                      check_status='Закрыто автоматически', flag=''
                WHERE posted=1 AND reserved=0 AND deleted=0""",
+            None,
+        ),
+        (
+            "UPDATE deals SET flag='' WHERE status_1c IN ('Выдан', 'Удален', 'Удалён')",
             None,
         ),
         ("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_import', ?)", (now,)),
