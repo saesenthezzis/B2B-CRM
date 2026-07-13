@@ -15,7 +15,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
 
 from dotenv import load_dotenv
