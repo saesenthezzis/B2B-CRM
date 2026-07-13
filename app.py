@@ -147,51 +147,54 @@ def stats():
 @app.patch("/api/deal/<path:key>")
 @login_required
 def patch_deal(key):
-    selected_user = (request.headers.get("X-User") or "").strip()
-    user = unquote(selected_user) if selected_user else session.get("username", "аноним")
-    data = request.get_json(force=True) or {}
-    fields = {k: v for k, v in data.items() if k in core.EDITABLE}
-    if not fields:
-        return jsonify({"error": "нет допустимых полей"}), 400
-    con = core.db()
-    old = con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone()
-    if old is None:
+    try:
+        selected_user = (request.headers.get("X-User") or "").strip()
+        user = unquote(selected_user) if selected_user else session.get("username", "аноним")
+        data = request.get_json(force=True) or {}
+        fields = {k: v for k, v in data.items() if k in core.EDITABLE}
+        if not fields:
+            return jsonify({"error": "нет допустимых полей"}), 400
+        con = core.db()
+        old = con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone()
+        if old is None:
+            con.close()
+            return jsonify({"error": "сделка не найдена"}), 404
+        old = dict(old)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        changes = {}
+        for f, v in fields.items():
+            v = v if v not in ("", None) else None
+            if f == "closing_docs" and v is not None:
+                v = 1 if v in (1, True, "1", "true", "Да") else 0
+            if v != old.get(f):
+                changes[f] = v
+                con.execute(
+                    "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) VALUES (?,?,?,?,?,?)",
+                    (key, f, str(old.get(f) or ""), str(v or ""), user, now))
+        if changes:
+            changes["flag"] = ""  # менеджер отработал строку — снимаем NEW/UPDATE
+            if not old.get("processed_at"):
+                changes["processed_at"] = now
+            # автодата закрытия при выборе закрывающего этапа
+            if changes.get("stage") in core.CLOSED_STAGES and not (old.get("close_date") or changes.get("close_date")):
+                changes["close_date"] = now[:10]
+            sets = ", ".join(f"{c}=:{c}" for c in changes)
+            params = dict(changes)
+            params["key"] = key
+            con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
+            con.commit()
+            # Пересчитать precomputed статусы после изменений
+            core.recompute_deal(con, key)
+            con.commit()
+        fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
+        has_action = con.execute("SELECT 1 FROM history WHERE deal_key=? AND user != '1С-импорт' LIMIT 1", (key,)).fetchone() is not None
         con.close()
-        return jsonify({"error": "сделка не найдена"}), 404
-    old = dict(old)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    changes = {}
-    for f, v in fields.items():
-        v = v if v not in ("", None) else None
-        if f == "closing_docs" and v is not None:
-            v = 1 if v in (1, True, "1", "true", "Да") else 0
-        if v != old.get(f):
-            changes[f] = v
-            con.execute(
-                "INSERT INTO history (deal_key, field, old_val, new_val, user, ts) VALUES (?,?,?,?,?,?)",
-                (key, f, str(old.get(f) or ""), str(v or ""), user, now))
-    if changes:
-        changes["updated_at"] = now
-        changes["updated_by"] = user
-        changes["flag"] = ""  # менеджер отработал строку — снимаем NEW/UPDATE
-        if not old.get("processed_at"):
-            changes["processed_at"] = now
-        # автодата закрытия при выборе закрывающего этапа
-        if changes.get("stage") in core.CLOSED_STAGES and not (old.get("close_date") or changes.get("close_date")):
-            changes["close_date"] = now[:10]
-        sets = ", ".join(f"{c}=:{c}" for c in changes)
-        params = dict(changes)
-        params["key"] = key
-        con.execute(f"UPDATE deals SET {sets} WHERE key=:key", params)
-        con.commit()
-        # Пересчитать precomputed статусы после изменений
-        core.recompute_deal(con, key)
-        con.commit()
-    fresh = dict(con.execute("SELECT * FROM deals WHERE key=?", (key,)).fetchone())
-    has_action = con.execute("SELECT 1 FROM history WHERE deal_key=? AND user != '1С-импорт' LIMIT 1", (key,)).fetchone() is not None
-    con.close()
-    fresh.update(core.derive(fresh, user_action_keys={key} if has_action else set()))
-    return jsonify(fresh)
+        fresh.update(core.derive(fresh, user_action_keys={key} if has_action else set()))
+        return jsonify(fresh)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/api/history/<path:key>")
