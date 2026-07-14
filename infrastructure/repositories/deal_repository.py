@@ -64,11 +64,12 @@ class DealRepository:
                 WHEN computed_status IN ('Удален', 'Удалён') THEN 'Удалены без продажи'
                 ELSE 'Прочее'
             END as s,
-            SUM(amount) as a
-        FROM deals WHERE {where_sql} GROUP BY s
+            COALESCE(author, '(пусто)') as a,
+            SUM(amount) as sum
+        FROM deals WHERE {where_sql} GROUP BY s, a
         '''
-        funnel_rows = list(self.db.execute(funnel_sql, params))
-        return {r["s"]: r["a"] or 0 for r in funnel_rows}
+        rows = list(self.db.execute(funnel_sql, params))
+        return [{"status": r["s"], "author": r["a"], "amount": r["sum"] or 0} for r in rows]
 
     def get_lost_stats(self, where_sql, params):
         lost_sql = f"SELECT COALESCE(NULLIF(reject_reason, ''), NULLIF(delete_reason, ''), '(без причины)') as r, SUM(amount) as a FROM deals WHERE {where_sql} AND ({SQL_IS_CLOSED} AND ({SQL_LEVEL}) != 'done') GROUP BY r"

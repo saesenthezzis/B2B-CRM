@@ -501,38 +501,82 @@ async function renderBoss() {
     };
 
     // 1. Trend chart: Actions by day
-    const dailyMap = {};
+    const allDates = new Set();
+    const authorsMap = {};
     (data.daily || []).forEach(d => {
-      if (!dailyMap[d.date]) dailyMap[d.date] = 0;
-      dailyMap[d.date] += d.actions;
+      allDates.add(d.date);
+      if (!authorsMap[d.user]) authorsMap[d.user] = {};
+      authorsMap[d.user][d.date] = d.actions;
     });
-    const trendDates = Object.keys(dailyMap).sort();
+    const trendDates = Array.from(allDates).sort();
     
     const ctxTrend = $('chActionsTrend').getContext('2d');
+    let trendDatasets = [];
+    const colors = ['#4361ee', '#4cc9f0', '#f72585', '#7209b7', '#ff9f1c', '#2ec4b6', '#e63946', '#8338ec', '#3a0ca3'];
+    
+    if (_bossSelectedMgrs.size === 0) {
+      const agg = {};
+      Object.values(authorsMap).forEach(am => {
+        Object.entries(am).forEach(([dt, val]) => { agg[dt] = (agg[dt] || 0) + val; });
+      });
+      trendDatasets.push({
+        label: 'Все действия',
+        data: trendDates.map(d => agg[d] || 0),
+        borderColor: '#4361ee',
+        backgroundColor: createGradient(ctxTrend, 'rgba(67, 97, 238, 0.4)', 'rgba(67, 97, 238, 0.0)'),
+        fill: true, tension: 0.4, borderWidth: 2, pointBackgroundColor: '#fff', pointBorderColor: '#4361ee'
+      });
+    } else {
+      let cIdx = 0;
+      Array.from(_bossSelectedMgrs).forEach(m => {
+        const c = colors[cIdx % colors.length];
+        cIdx++;
+        trendDatasets.push({
+          label: m,
+          data: trendDates.map(d => (authorsMap[m] && authorsMap[m][d]) || 0),
+          borderColor: c,
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.4, borderWidth: 2, pointBackgroundColor: '#fff', pointBorderColor: c
+        });
+      });
+    }
+
     charts.push(new Chart(ctxTrend, {
       type: 'line',
-      data: {
-        labels: trendDates,
-        datasets: [{
-          label: 'Действий',
-          data: trendDates.map(d => dailyMap[d]),
-          borderColor: '#4361ee',
-          backgroundColor: createGradient(ctxTrend, 'rgba(67, 97, 238, 0.4)', 'rgba(67, 97, 238, 0.0)'),
-          fill: true,
-          tension: 0.4,
-          borderWidth: 2,
-          pointBackgroundColor: '#fff',
-          pointBorderColor: '#4361ee',
-          pointBorderWidth: 2
-        }]
-      },
-      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false }
+      data: { labels: trendDates, datasets: trendDatasets },
+      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: _bossSelectedMgrs.size > 0 } }, responsive: true, maintainAspectRatio: false }
     }));
 
     // 2. Funnel (Bar waterfall)
-    const funnelObj = data.funnel || {};
+    const funnelList = data.funnel || [];
     const fOrder = ['Выданы', 'В резерве (оплачено)', 'В резерве (не оплачено)', 'Удалены без продажи'];
-    const funnelData = fOrder.map(l => funnelObj[l] || 0);
+    
+    let funnelDatasets = [];
+    if (_bossSelectedMgrs.size === 0) {
+      const aggF = {};
+      funnelList.forEach(f => { aggF[f.status] = (aggF[f.status] || 0) + f.amount; });
+      funnelDatasets.push({
+        label: 'Сумма',
+        data: fOrder.map(l => aggF[l] || 0),
+        backgroundColor: ['#2ec4b6', '#4cc9f0', '#ff9f1c', '#e63946'],
+        borderRadius: 4
+      });
+    } else {
+      let cIdx = 0;
+      Array.from(_bossSelectedMgrs).forEach(m => {
+        const c = colors[cIdx % colors.length];
+        cIdx++;
+        const mapF = {};
+        funnelList.forEach(f => { if (f.author === m) mapF[f.status] = (mapF[f.status] || 0) + f.amount; });
+        funnelDatasets.push({
+          label: m,
+          data: fOrder.map(l => mapF[l] || 0),
+          backgroundColor: c,
+          borderRadius: 4
+        });
+      });
+    }
+
     charts.push(new Chart($('chFunnel'), {
       type: 'bar',
       data: {
