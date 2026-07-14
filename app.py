@@ -25,7 +25,6 @@ import core
 from infrastructure.database import get_db, close_db as infra_close_db
 from infrastructure.repositories.deal_repository import DealRepository
 from application.services.deal_service import DealService
-from application.services.stats_service import StatsService
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-rmko-key-12345")
@@ -44,6 +43,21 @@ def login_required(f):
             return redirect(url_for('login_page'))
         return f(*args, **kwargs)
     return decorated_function
+
+import subprocess
+
+@app.get("/ts/<path:filename>")
+def serve_ts_as_js(filename):
+    if filename.endswith(".ts"):
+        js_filename = filename[:-3] + ".js"
+    else:
+        js_filename = filename
+        
+    js_path = os.path.join(app.static_folder, js_filename)
+    if not os.path.exists(js_path):
+        subprocess.run(["npx", "tsc"], cwd=core.BASE)
+        
+    return send_from_directory(app.static_folder, js_filename, mimetype="application/javascript")
 
 @app.get("/")
 @login_required
@@ -118,35 +132,6 @@ def deals_summary():
         return jsonify({"error": str(e)}), 500
 
 
-@app.get("/api/stats")
-@login_required
-def stats():
-    try:
-        db = get_db()
-        repo = DealRepository(db)
-        service = StatsService(repo)
-        
-        target_user = request.args.get("me") or session.get("username", "")
-        global_flag = request.args.get("global") == "1"
-        
-        if global_flag:
-            target_user = None
-
-        zone_cities = []
-        if target_user:
-            specialists = core.load_specialists(db)
-            for s in specialists:
-                if s["name"] == target_user and s["city"]:
-                    zone_cities.append(s["city"])
-                    
-        where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
-        
-        result = service.get_dashboard_stats(where_sql, params)
-        return jsonify(result)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
 
 @app.patch("/api/deal/<path:key>")
@@ -383,121 +368,6 @@ def auth_logout():
     return jsonify({"success": True})
 
 
-@app.get("/api/dashboard/data")
-@login_required
-def dashboard_data():
-    view = request.args.get("view", "trend")
-    period = request.args.get("period", "month")
-    group_by = request.args.get("groupBy", "city")
-
-    target_user = request.args.get("me") or session.get("username", "")
-    db = get_db()
-    zone_cities = []
-    if target_user:
-        specialists = core.load_specialists(db)
-        for s in specialists:
-            if s["name"] == target_user and s["city"]:
-                zone_cities.append(s["city"])
-                
-    where_sql, params = core.build_filters_sql(request.args, zone_cities=zone_cities)
-    
-    from datetime import datetime, timedelta
-    now = datetime.now()
-    if period == "week":
-        date_threshold = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    elif period == "month":
-        date_threshold = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-    elif period == "quarter":
-        date_threshold = (now - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
-    elif period == "year":
-        date_threshold = (now - timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        date_threshold = "1970-01-01"
-        
-    filtered_where_sql = f"({where_sql}) AND COALESCE(doc_date, created_at) >= :date_threshold"
-    params["date_threshold"] = date_threshold
-
-    repo = DealRepository(db)
-
-    if view == "trend":
-        raw = repo.get_dashboard_raw_deals(filtered_where_sql, params)
-        if not raw:
-            return jsonify({"series": []})
-        
-        from collections import defaultdict
-        grouped = defaultdict(list)
-        for r in raw:
-            dt = r["date"][:10] if r["date"] else None
-            if not dt: continue
-            try:
-                date_obj = datetime.strptime(dt, "%Y-%m-%d")
-            except ValueError:
-                continue
-            
-            if period == "week":
-                key = dt
-            elif period in ("month", "quarter"):
-                key = date_obj.strftime("%Y-W%W")
-            else:
-                key = date_obj.strftime("%Y-%m")
-            
-            amt = float(r["amount"]) if r["amount"] is not None else 0.0
-            grouped[key].append(amt)
-            
-        series = []
-        for key in sorted(grouped.keys()):
-            vals = grouped[key]
-            series.append({
-                "time": key,
-                "open": round(vals[0], 2),
-                "high": round(max(vals), 2),
-                "low": round(min(vals), 2),
-                "close": round(vals[-1], 2),
-            })
-        return jsonify({"series": series})
-
-    elif view == "structure":
-        col_map = {"city": "city", "author": "author", "stage": "stage"}
-        col = col_map.get(group_by, "city")
-        data = repo.get_dashboard_structure(filtered_where_sql, params, col)
-        return jsonify({
-            "labels": [r["label"] for r in data],
-            "values": [round(float(r["val"] or 0), 2) for r in data]
-        })
-
-    elif view == "rating":
-        data = repo.get_dashboard_rating(filtered_where_sql, params)
-        return jsonify({
-            "labels": [r["label"] for r in data],
-            "values": [round(float(r["val"] or 0), 2) for r in data]
-        })
-
-    elif view == "plan":
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-        plan_where = f"({where_sql}) AND COALESCE(doc_date, created_at) >= :month_start"
-        params["month_start"] = month_start
-        
-        raw = repo.get_dashboard_raw_deals(plan_where, params)
-        if not raw:
-            return jsonify({"series": []})
-            
-        from collections import defaultdict
-        daily = defaultdict(float)
-        for r in raw:
-            dt = r["date"][:10] if r["date"] else None
-            if dt:
-                amt = float(r["amount"]) if r["amount"] is not None else 0.0
-                daily[dt] += amt
-                
-        series = []
-        cum = 0.0
-        for key in sorted(daily.keys()):
-            cum += daily[key]
-            series.append({"x": key, "y": round(cum, 2)})
-            
-        return jsonify({"series": series})
-
-    return jsonify({"error": "unknown view"}), 400
 
 
 if __name__ == "__main__":

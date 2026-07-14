@@ -27,3 +27,9 @@ test_*.py
 /.agents
 /.agent
 /.local_archive/
+node_modules/
+.venv/
+# Ignore compiled JS artifacts from TS
+*.js
+/Построение системы Business Process Observability для B2B продаж  от концепции до внедрения.md
+/legacy_analytics/

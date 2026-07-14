@@ -11,6 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
 
   <link rel="stylesheet" href="/static/style.css">
+  <script>var exports = {};</script>
 </head>
 <body>
 
@@ -20,8 +21,6 @@
 
   <div class="mode-tabs" id="modes">
     <a class="mode-tab act" data-m="mgr">Сделки</a>
-    <a class="mode-tab" data-m="analytics">Аналитика</a>
-    <a class="mode-tab" data-m="boss">Отчет</a>
     <a class="mode-tab" data-m="settings">Настройки</a>
   </div>
 
@@ -142,118 +141,6 @@
     </details>
   </section>
 
-  <!-- ======== Отчет (Дашборд Руководителя) ======== -->
-  <section id="v-boss" class="hidden">
-    <div class="boss-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-      <h2 style="margin:0; font-size:24px; color:var(--color-ink);">Глобальный Дашборд</h2>
-      <div class="boss-filters" style="display:flex; gap:8px;">
-        <select id="bossPeriod" class="aether-select">
-          <option value="all">За всё время</option>
-          <option value="month" selected>За месяц</option>
-          <option value="week">За неделю</option>
-          <option value="day">За сегодня</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Charts Row 1 -->
-    <div class="grid2" style="margin-bottom:24px; gap:16px; display:grid; grid-template-columns: 250px 2fr 1.2fr;">
-      <div class="card" style="padding:16px; max-height: 380px; overflow-y: auto;">
-        <h3 style="margin-top:0; font-size:14px; margin-bottom:12px;">Выбор менеджера</h3>
-        <div id="bossMgrFilters" style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
-          <!-- Will be populated by JS -->
-        </div>
-      </div>
-      <div class="card" style="padding:16px;">
-        <h3 style="margin-top:0; font-size:14px;">Динамика действий (Дни)</h3>
-        <canvas id="chActionsTrend"></canvas>
-      </div>
-      <div class="card" style="padding:16px;">
-        <h3 style="margin-top:0; font-size:14px;">Воронка документов</h3>
-        <canvas id="chFunnel"></canvas>
-      </div>
-    </div>
-
-    <!-- Charts Row 2 -->
-    <div class="grid2" style="margin-bottom:24px; gap:16px; display:grid; grid-template-columns: 1fr 1fr;">
-      <div class="card" style="padding:16px;">
-        <h3 style="margin-top:0;">Сумма по менеджерам</h3>
-        <canvas id="chMgrSum"></canvas>
-      </div>
-      <div class="card" style="padding:16px;">
-        <h3 style="margin-top:0;">Сумма по городам</h3>
-        <canvas id="chCitySum"></canvas>
-      </div>
-    </div>
-
-    <!-- Performance Table -->
-    <div class="card" style="padding:16px;">
-      <h3 style="margin-top:0;">Сводка по менеджерам</h3>
-      <div class="tw" style="max-height:420px; overflow-y:auto;">
-        <table id="tblMgr" class="aether-table" style="width:100%;">
-          <thead>
-            <tr>
-              <th>Менеджер</th>
-              <th>Сумма (В работе)</th>
-              <th>Закрыто (Сумма)</th>
-              <th>В работе (шт)</th>
-              <th>Готово к выдаче</th>
-              <th>Риск/Просрок</th>
-              <th>Ошибки</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- ======== Аналитика (Power BI-style) ======== -->
-  <section id="v-analytics" class="hidden">
-
-    <!-- Top controls -->
-    <div class="analytics-controls">
-      <div class="radio-inputs" id="dashPeriodCtl">
-        <label class="radio"><input type="radio" name="d-per" value="month"><span class="name">Месяц</span></label>
-        <label class="radio"><input type="radio" name="d-per" value="quarter"><span class="name">Квартал</span></label>
-        <label class="radio"><input type="radio" name="d-per" value="year" checked><span class="name">Год</span></label>
-        <label class="radio"><input type="radio" name="d-per" value="all"><span class="name">Всё время</span></label>
-      </div>
-      <div class="radio-inputs" id="dashMetricCtl">
-        <label class="radio"><input type="radio" name="d-met" value="sum" checked><span class="name">Сумма</span></label>
-        <label class="radio"><input type="radio" name="d-met" value="count"><span class="name">Кол-во</span></label>
-        <label class="radio"><input type="radio" name="d-met" value="avg"><span class="name">Ср. чек</span></label>
-      </div>
-    </div>
-
-    <!-- Dashboard body: sidebar + content -->
-    <div class="dash-layout">
-
-      <!-- Sidebar filters -->
-      <aside class="dash-sidebar">
-        <div class="dash-filter">
-          <div class="dash-filter__title">Город</div>
-          <div class="dash-filter__list" id="dashCityList"></div>
-        </div>
-
-      </aside>
-
-      <!-- Main content -->
-      <div class="dash-main">
-        <div class="kpis" id="dashKpis"></div>
-
-        <div class="card dash-card-trend"><div id="dashTrend" style="height:310px"></div></div>
-
-        <div class="dash-grid3">
-          <div class="card"><h3>Топ клиентов</h3><div id="dashClients" style="height:340px"></div></div>
-          <div class="card"><h3>По городам</h3><div id="dashCityBars" style="height:340px"></div></div>
-          <div class="card"><h3>Динамика по городам</h3><div id="dashCityTrend" style="height:340px"></div></div>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
   <!-- ======== Настройки ======== -->
   <section id="v-settings" class="hidden">
     <div class="settings-card">
@@ -285,7 +172,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/dashboard.js"></script>
-<script src="/static/app.js"></script>
+<script src="/ts/app.ts?v=2"></script>
 </body>
 </html>
