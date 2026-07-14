@@ -142,17 +142,68 @@
     </details>
   </section>
 
-  <!-- ======== Отчет ======== -->
+  <!-- ======== Отчет (Дашборд Руководителя) ======== -->
   <section id="v-boss" class="hidden">
-    <div class="kpis" id="bossKpis"></div>
-    <div class="grid2">
-      <div class="card"><h3>Действия по менеджерам</h3><canvas id="chActionsBar"></canvas></div>
-      <div class="card"><h3>Динамика действий (по дням)</h3><canvas id="chActionsTrend"></canvas></div>
+    <div class="boss-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h2 style="margin:0; font-size:24px; color:var(--color-ink);">Глобальный Дашборд</h2>
+      <div class="boss-filters" style="display:flex; gap:8px;">
+        <select id="bossPeriod" class="aether-select">
+          <option value="all">За всё время</option>
+          <option value="month" selected>За месяц</option>
+          <option value="week">За неделю</option>
+          <option value="day">За сегодня</option>
+        </select>
+      </div>
     </div>
-    <div class="card">
-      <h3>Производительность сотрудников</h3>
-      <div class="tw" style="max-height:420px">
-        <table id="tblMgr"><thead></thead><tbody></tbody></table>
+
+    <!-- Charts Row 1 -->
+    <div class="grid2" style="margin-bottom:24px; gap:16px; display:grid; grid-template-columns: 250px 2fr 1.2fr;">
+      <div class="card" style="padding:16px; max-height: 380px; overflow-y: auto;">
+        <h3 style="margin-top:0; font-size:14px; margin-bottom:12px;">Выбор менеджера</h3>
+        <div id="bossMgrFilters" style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+          <!-- Will be populated by JS -->
+        </div>
+      </div>
+      <div class="card" style="padding:16px;">
+        <h3 style="margin-top:0; font-size:14px;">Динамика действий (Дни)</h3>
+        <canvas id="chActionsTrend"></canvas>
+      </div>
+      <div class="card" style="padding:16px;">
+        <h3 style="margin-top:0; font-size:14px;">Воронка документов</h3>
+        <canvas id="chFunnel"></canvas>
+      </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="grid2" style="margin-bottom:24px; gap:16px; display:grid; grid-template-columns: 1fr 1fr;">
+      <div class="card" style="padding:16px;">
+        <h3 style="margin-top:0;">Сумма по менеджерам</h3>
+        <canvas id="chMgrSum"></canvas>
+      </div>
+      <div class="card" style="padding:16px;">
+        <h3 style="margin-top:0;">Сумма по городам</h3>
+        <canvas id="chCitySum"></canvas>
+      </div>
+    </div>
+
+    <!-- Performance Table -->
+    <div class="card" style="padding:16px;">
+      <h3 style="margin-top:0;">Сводка по менеджерам</h3>
+      <div class="tw" style="max-height:420px; overflow-y:auto;">
+        <table id="tblMgr" class="aether-table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Менеджер</th>
+              <th>Сумма (В работе)</th>
+              <th>Закрыто (Сумма)</th>
+              <th>В работе (шт)</th>
+              <th>Готово к выдаче</th>
+              <th>Риск/Просрок</th>
+              <th>Ошибки</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </div>
     </div>
   </section>

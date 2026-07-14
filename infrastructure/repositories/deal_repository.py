@@ -55,7 +55,18 @@ class DealRepository:
         return dict(kpi_row)
 
     def get_funnel_stats(self, where_sql, params):
-        funnel_sql = f"SELECT COALESCE(stage, '(нет этапа)') as s, SUM(amount) as a FROM deals WHERE {where_sql} GROUP BY s"
+        funnel_sql = f'''
+        SELECT 
+            CASE 
+                WHEN computed_status = 'Выдан' THEN 'Выданы'
+                WHEN computed_status = 'Резерв' AND has_payment = 1 THEN 'В резерве (оплачено)'
+                WHEN computed_status = 'Резерв' AND (has_payment = 0 OR has_payment IS NULL) THEN 'В резерве (не оплачено)'
+                WHEN computed_status IN ('Удален', 'Удалён') THEN 'Удалены без продажи'
+                ELSE 'Прочее'
+            END as s,
+            SUM(amount) as a
+        FROM deals WHERE {where_sql} GROUP BY s
+        '''
         funnel_rows = list(self.db.execute(funnel_sql, params))
         return {r["s"]: r["a"] or 0 for r in funnel_rows}
 

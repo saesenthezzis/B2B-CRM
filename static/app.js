@@ -438,47 +438,69 @@ async function showHist(key) {
 /* ---------- руководитель ---------- */
 let charts = [];
 let _bossReqId = 0;
+let _bossSelectedMgrs = new Set();
 async function renderBoss() {
   const signal = freshSignal();
   const myId = ++_bossReqId;
-  $('bossKpis').innerHTML = '<div style="padding:22px">Загрузка аналитики...</div>';
   try {
-    const r = await fetch('/api/stats?' + buildParams().toString(), { signal });
+    const p = new URLSearchParams();
+    p.set('global', '1');
+    p.set('queue', 'all'); // Force to get all data, not just 'new' queue
+    const bPeriod = $('bossPeriod') ? $('bossPeriod').value : 'month';
+    if (bPeriod === 'month') p.set('period', 'month');
+    else if (bPeriod === 'week') p.set('period', 'week');
+    else if (bPeriod === 'day') p.set('period', 'day');
+    
+    if (_bossSelectedMgrs.size > 0) {
+      p.set('boss_users', Array.from(_bossSelectedMgrs).join(','));
+    }
+    
+    // Attach event listener if not attached
+    const bp = $('bossPeriod');
+    if (bp && !bp.dataset.bound) {
+      bp.onchange = () => renderBoss();
+      bp.dataset.bound = 'true';
+    }
+    
+    const r = await fetch('/api/stats?' + p.toString(), { signal });
     if (myId !== _bossReqId) return;
     const data = await r.json();
     if (myId !== _bossReqId) return;
     
-    const perf = Object.values(data.performance || {});
-    let totalActions = 0, totalDeals = new Set(), totalNotes = 0, totalStages = 0;
-    
-    perf.forEach(p => {
-      totalActions += p.total_actions;
-      totalNotes += p.notes_added;
-      totalStages += p.stages_changed;
-    });
-
-    $('bossKpis').innerHTML = `
-      <div class="kpi"><div class="lbl">Всего действий</div><div class="val">${totalActions}</div><div class="det">за период</div></div>
-      <div class="kpi"><div class="lbl">Сотрудников</div><div class="val">${perf.length}</div><div class="det">активных</div></div>
-      <div class="kpi"><div class="lbl">Смена этапов</div><div class="val">${totalStages}</div><div class="det">движение сделок</div></div>
-      <div class="kpi"><div class="lbl">Заметки</div><div class="val">${totalNotes}</div><div class="det">коммуникации</div></div>`;
+    const formatMoney = (val) => {
+      if (!val) return '0 ₽';
+      return new Intl.NumberFormat('ru-RU').format(Math.round(val)) + ' ₽';
+    };
 
     charts.forEach(c => c.destroy()); charts = [];
     if (!window.Chart) return;
-    const bar = (el, labels, dset, color, horizontal) => charts.push(new Chart($(el), {
-      type: 'bar',
-      data: { labels, datasets: [{ data: dset, backgroundColor: color }] },
-      options: {
-        indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: false } },
-        scales: { [horizontal ? 'x' : 'y']: { beginAtZero: true } }
-      },
-    }));
+    
+    const mgrContainer = $('bossMgrFilters');
+    if (mgrContainer && mgrContainer.children.length === 0) {
+      const allMgrs = Object.keys(SPEC).sort((a,b) => a.localeCompare(b, 'ru'));
+      mgrContainer.innerHTML = allMgrs.map(m => `
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" value="${esc(m)}" ${_bossSelectedMgrs.has(m) ? 'checked' : ''}>
+          <span>${esc(m)}</span>
+        </label>
+      `).join('');
+      mgrContainer.querySelectorAll('input').forEach(chk => {
+        chk.onchange = () => {
+          if (chk.checked) _bossSelectedMgrs.add(chk.value);
+          else _bossSelectedMgrs.delete(chk.value);
+          renderBoss();
+        };
+      });
+    }
 
-    // Bar chart: Actions by user
-    const topUsers = perf.sort((a, b) => b.total_actions - a.total_actions).slice(0, 15);
-    bar('chActionsBar', topUsers.map(u => u.user), topUsers.map(u => u.total_actions), '#3a7ca5', true);
+    const createGradient = (ctx, color1, color2) => {
+      const g = ctx.createLinearGradient(0, 0, 0, 300);
+      g.addColorStop(0, color1);
+      g.addColorStop(1, color2);
+      return g;
+    };
 
-    // Trend chart: Actions by day
+    // 1. Trend chart: Actions by day
     const dailyMap = {};
     (data.daily || []).forEach(d => {
       if (!dailyMap[d.date]) dailyMap[d.date] = 0;
@@ -486,38 +508,98 @@ async function renderBoss() {
     });
     const trendDates = Object.keys(dailyMap).sort();
     
-    charts.push(new Chart($('chActionsTrend'), {
+    const ctxTrend = $('chActionsTrend').getContext('2d');
+    charts.push(new Chart(ctxTrend, {
       type: 'line',
       data: {
         labels: trendDates,
         datasets: [{
           label: 'Действий',
           data: trendDates.map(d => dailyMap[d]),
-          borderColor: '#ff6a00',
-          backgroundColor: 'rgba(255, 106, 0, 0.1)',
+          borderColor: '#4361ee',
+          backgroundColor: createGradient(ctxTrend, 'rgba(67, 97, 238, 0.4)', 'rgba(67, 97, 238, 0.0)'),
           fill: true,
-          tension: 0.3
+          tension: 0.4,
+          borderWidth: 2,
+          pointBackgroundColor: '#fff',
+          pointBorderColor: '#4361ee',
+          pointBorderWidth: 2
         }]
       },
-      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } }
+      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false }
+    }));
+
+    // 2. Funnel (Bar waterfall)
+    const funnelObj = data.funnel || {};
+    const fOrder = ['Выданы', 'В резерве (оплачено)', 'В резерве (не оплачено)', 'Удалены без продажи'];
+    const funnelData = fOrder.map(l => funnelObj[l] || 0);
+    charts.push(new Chart($('chFunnel'), {
+      type: 'bar',
+      data: {
+        labels: fOrder,
+        datasets: [{
+          data: funnelData,
+          backgroundColor: ['#2ec4b6', '#4cc9f0', '#ff9f1c', '#e63946'],
+          borderRadius: 4
+        }]
+      },
+      options: { 
+        indexAxis: 'y', 
+        plugins: { legend: { display: false } }, 
+        scales: { x: { beginAtZero: true } },
+        responsive: true, 
+        maintainAspectRatio: false 
+      }
+    }));
+
+    // 3. Manager Sums (Bar)
+    const mgrsObj = data.managers || {};
+    const mgrNames = Object.keys(mgrsObj).sort((a, b) => (mgrsObj[b].sum || 0) - (mgrsObj[a].sum || 0)).slice(0, 15);
+    const mgrSums = mgrNames.map(m => mgrsObj[m].sum || 0);
+    charts.push(new Chart($('chMgrSum'), {
+      type: 'bar',
+      data: {
+        labels: mgrNames,
+        datasets: [{
+          data: mgrSums,
+          backgroundColor: '#4cc9f0',
+          borderRadius: 4
+        }]
+      },
+      options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } }, responsive: true, maintainAspectRatio: false }
+    }));
+
+    // 4. City Sums (Bar)
+    const citiesObj = data.cities || {};
+    const cityNames = Object.keys(citiesObj).sort((a, b) => ((citiesObj[b][0] || 0) + (citiesObj[b][1] || 0)) - ((citiesObj[a][0] || 0) + (citiesObj[a][1] || 0))).slice(0, 15);
+    charts.push(new Chart($('chCitySum'), {
+      type: 'bar',
+      data: {
+        labels: cityNames,
+        datasets: [
+          { label: 'В работе', data: cityNames.map(c => citiesObj[c][0]), backgroundColor: '#ff9f1c', borderRadius: 2 },
+          { label: 'Завершено', data: cityNames.map(c => citiesObj[c][1]), backgroundColor: '#2ec4b6', borderRadius: 2 }
+        ]
+      },
+      options: { plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, responsive: true, maintainAspectRatio: false }
     }));
 
     // Managers table
-    $('tblMgr').querySelector('thead').innerHTML =
-      '<tr><th>Менеджер</th><th>Действий</th><th>Уникальных сделок</th><th>Смена этапов</th><th>Заметок</th><th>Отметки об оплате</th><th>Склад проверен</th></tr>';
-    $('tblMgr').querySelector('tbody').innerHTML = topUsers.map(u =>
-      `<tr>
-        <td><b>${esc(u.user)}</b></td>
-        <td>${u.total_actions}</td>
-        <td>${u.deals_touched}</td>
-        <td>${u.stages_changed}</td>
-        <td>${u.notes_added}</td>
-        <td>${u.payments_marked}</td>
-        <td>${u.stock_checked}</td>
-       </tr>`).join('');
+    $('tblMgr').querySelector('tbody').innerHTML = mgrNames.map(m => {
+      const sm = mgrsObj[m] || {};
+      return `<tr>
+        <td><b>${esc(m)}</b></td>
+        <td>${formatMoney(sm.sum)}</td>
+        <td>${sm.done || 0}</td>
+        <td>${sm.act || 0}</td>
+        <td>${sm.ready || 0}</td>
+        <td><span style="color:#d32f2f">${sm.risk || 0}</span> / <span style="color:#f57c00">${sm.over || 0}</span></td>
+        <td style="color:#d32f2f">${sm.err || 0}</td>
+       </tr>`;
+    }).join('');
   } catch (e) {
     if (e.name !== 'AbortError') {
-      $('bossKpis').innerHTML = '<div style="padding:22px;color:red">Ошибка загрузки аналитики</div>';
+      console.error(e);
     }
   }
 };

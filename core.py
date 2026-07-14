@@ -1281,6 +1281,15 @@ def build_filters_sql(args, zone_cities=None):
         where.append("author = :me")
         params["me"] = me
 
+    boss_users = args.get("boss_users", "")
+    if boss_users:
+        users_list = [u.strip() for u in boss_users.split(",") if u.strip()]
+        if users_list:
+            placeholders = ", ".join(f":bu_{i}" for i in range(len(users_list)))
+            where.append(f"author IN ({placeholders})")
+            for i, u in enumerate(users_list):
+                params[f"bu_{i}"] = u
+
     range_from = args.get("fFrom", "")
     range_to = args.get("fTo", "")
     

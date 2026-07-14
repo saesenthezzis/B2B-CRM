@@ -71,7 +71,7 @@ def meta():
         result = {
             "cities": cities,
             "specialists": specialists,
-            "stages": core.STAGES, "next_steps": core.NEXT_STEPS,
+            "next_steps": core.NEXT_STEPS,
             "reject_reasons": core.REJECT_REASONS, "delete_reasons": core.DELETE_REASONS,
             "check_statuses": core.CHECK_STATUSES, "goods_check": core.GOODS_CHECK,
             "last_import": li["v"] if li else None,
@@ -127,6 +127,11 @@ def stats():
         service = StatsService(repo)
         
         target_user = request.args.get("me") or session.get("username", "")
+        global_flag = request.args.get("global") == "1"
+        
+        if global_flag:
+            target_user = None
+
         zone_cities = []
         if target_user:
             specialists = core.load_specialists(db)
@@ -497,8 +502,12 @@ def dashboard_data():
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    if not os.path.exists(core.DB_PATH):
+    
+    # Запускаем импорт только если используется локальная SQLite и файла нет
+    is_local_db = not os.getenv("DATABASE_URL")
+    if is_local_db and not os.path.exists(core.DB_PATH):
         print("Первый запуск: импортирую данные из xlsx...")
         print(core.import_xlsx(first=True))
+        
     print("РМКО запущено: http://localhost:8000 (по сети — http://<ip-компьютера>:8000)")
     app.run(host="0.0.0.0", port=8000, debug=False)

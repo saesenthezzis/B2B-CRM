@@ -28,9 +28,21 @@ class StatsService:
         performance = self.repo.get_user_performance_stats(where_sql, params)
         daily = self.repo.get_user_daily_activity(where_sql, params)
         
+        # Additional KPI data for the Boss Dashboard
+        kpi = self.repo.get_kpi_stats(where_sql, params)
+        managers = self.repo.get_mgr_stats(where_sql, params)
+        funnel = self.repo.get_funnel_stats(where_sql, params)
+        cities = self.repo.get_cities_stats(where_sql, params)
+        weeks = self.repo.get_weeks_stats(where_sql, params)
+        
         result = {
             "performance": performance,
-            "daily": daily
+            "daily": daily,
+            "kpi": kpi,
+            "managers": managers,
+            "funnel": funnel,
+            "cities": cities,
+            "weeks": weeks
         }
 
         with self._cache_lock:
