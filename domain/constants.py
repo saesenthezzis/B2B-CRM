@@ -16,24 +16,17 @@ GOODS_CHECK = ["Ожидает проверки", "Проверено"]
 
 # поля, которые редактирует менеджер (разрешены в PATCH)
 EDITABLE = {
-    "last_contact", "close_date",
-    "reject_reason", "delete_reason", "notes", "in_stock",
-    "closing_docs", "delivery", "contract_num", "lead_source", "mgr_comment",
+    "delete_reason", "notes", "in_stock",
 }
 
 # SQL Condition Strings extracted from core.py
-SQL_IS_CLOSED = "computed_status IN ('Выдан', 'Удален', 'Удалён') OR deleted=1"
-SQL_OVERDUE = """
-    CASE WHEN plan_contact IS NOT NULL AND plan_contact != '' 
-    THEN date(substr(plan_contact, 7, 4) || '-' || substr(plan_contact, 4, 2) || '-' || substr(plan_contact, 1, 2)) < date('now', 'localtime')
-    ELSE 0 END
-"""
+SQL_IS_CLOSED = "computed_status IN ('Выдан', 'Удален', 'Удалён')"
+SQL_OVERDUE = "0"
 SQL_LEVEL = """
     CASE 
       WHEN status_1c = 'Ошибка' THEN 'error'
       WHEN computed_status = 'Выдан' THEN 'done'
-      WHEN computed_status IN ('Удален', 'Удалён') OR deleted=1 THEN 'done'
-      WHEN plan_contact IS NOT NULL AND plan_contact != '' AND date(substr(plan_contact, 7, 4) || '-' || substr(plan_contact, 4, 2) || '-' || substr(plan_contact, 1, 2)) < date('now', 'localtime') THEN 'risk'
+      WHEN computed_status IN ('Удален', 'Удалён') THEN 'done'
       ELSE 'ready'
     END
 """

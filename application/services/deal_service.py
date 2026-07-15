@@ -28,7 +28,7 @@ class DealService:
         order_by = sort_col
         if sort_col == "status":
             order_by = "computed_level"
-        elif sort_col not in ("amount", "client", "doc_date", "stage", "city", "doc_num", "in_stock", "plan_contact", "notes", "author"):
+        elif sort_col not in ("amount", "client", "doc_date", "city", "doc_num", "in_stock", "notes", "author"):
             order_by = "amount"
             
         direction = "DESC" if sort_dir == -1 else "ASC"

@@ -271,9 +271,7 @@ CLOSED_STAGES = {"Закрыто", "Не состоялась", "Удалён", 
 
 # поля, которые редактирует менеджер (разрешены в PATCH)
 EDITABLE = {
-    "stage", "last_contact", "close_date",
-    "reject_reason", "delete_reason", "notes", "in_stock",
-    "closing_docs", "delivery", "contract_num", "lead_source", "mgr_comment",
+    "delete_reason", "notes", "in_stock",
 }
 
 # Таблицы (без индексов на колонки из миграций)
@@ -284,15 +282,12 @@ CREATE TABLE IF NOT EXISTS deals (
     territory TEXT, city TEXT, branch TEXT, author TEXT,
     doc TEXT, doc_num TEXT, created_at TEXT, doc_date TEXT,
     client TEXT, amount REAL, contacts TEXT, comment_1c TEXT,
-    deleted INTEGER DEFAULT 0, posted INTEGER DEFAULT 0, reserved INTEGER DEFAULT 0,
     status_1c TEXT,
     payment_amount REAL, payment_source TEXT, payment_date TEXT,
     has_payment INTEGER DEFAULT 0, invoice_basis TEXT,
-    stage TEXT, next_step TEXT, plan_contact TEXT, last_contact TEXT,
-    close_date TEXT, reject_reason TEXT, delete_reason TEXT, notes TEXT,
-    check_status TEXT, in_stock TEXT DEFAULT 'Ожидает проверки', closing_docs INTEGER, delivery TEXT,
-    contract_num TEXT, lead_source TEXT, mgr_comment TEXT,
-    flag TEXT DEFAULT '', fixed_at TEXT, processed_at TEXT,
+    delete_reason TEXT, notes TEXT,
+    in_stock TEXT DEFAULT 'Ожидает проверки',
+    flag TEXT DEFAULT '',
     computed_status TEXT, computed_level TEXT
 );
 CREATE TABLE IF NOT EXISTS history (
@@ -328,10 +323,9 @@ SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS ix_deals_city ON deals(city);
 CREATE INDEX IF NOT EXISTS ix_hist_key ON history(deal_key);
 CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key);
-CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage);
 CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at);
 CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date);
-CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, stage, created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, created_at DESC);
 """
 
 # Объединённая схема для обратной совместимости (новая БД — всё за один раз)
@@ -348,12 +342,11 @@ _MIGRATIONS = [
     "ALTER TABLE deals ADD COLUMN computed_status TEXT",
     "ALTER TABLE deals ADD COLUMN computed_level TEXT",
     "CREATE INDEX IF NOT EXISTS ix_hist_user_deal ON history(user, deal_key)",
-    "CREATE INDEX IF NOT EXISTS ix_deals_stage ON deals(stage)",
     "CREATE INDEX IF NOT EXISTS ix_deals_created ON deals(created_at)",
     "CREATE INDEX IF NOT EXISTS ix_deals_doc_date ON deals(doc_date)",
     "CREATE INDEX IF NOT EXISTS ix_deals_computed_level ON deals(computed_level)",
     "CREATE INDEX IF NOT EXISTS ix_deals_status_level ON deals(computed_status, computed_level)",
-    "CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, stage, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_deals_filters_created ON deals(computed_status, city, created_at DESC)",
 ]
 
 # Миграция in_stock INTEGER → TEXT (0 → 'Ожидает проверки', 1 → 'Проверено')
@@ -619,16 +612,6 @@ def cur_status(d):
     status_1c = d.get("status_1c")
     if status_1c and status_1c in STATUS_FROM_1C:
         return status_1c
-    # Старый формат: вычисляем из флагов deleted/posted/reserved
-    deleted, posted, reserved = int(bool(d["deleted"])), int(bool(d["posted"])), int(bool(d["reserved"]))
-    for name, c in STATUS_RULES:
-        if c["deleted"] == deleted and c["posted"] == posted and c["reserved"] == reserved:
-            return name
-    # комбинации вне таблицы: помеченные на удаление -> Удален, иначе -> Резерв
-    if deleted:
-        return STATUS_DELETED
-    if posted and not reserved:
-        return "Выдан"
     return "Резерв"
 
 
@@ -681,32 +664,13 @@ def derive(d, today=None, user_action_keys=None):
     if user_action_keys is not None:
         has_user_action = d["key"] in user_action_keys
     
-    is_issued = st == "Выдан" or (
-        bool(d.get("posted")) and not bool(d.get("reserved")) and not bool(d.get("deleted"))
-    )
+    is_issued = st == "Выдан"
     if is_issued:
         chk_status = "Закрыто" if has_user_action else "Закрыто автоматически"
     else:
         chk_status = "В работе" if has_user_action else "Новая"
 
     errors = []
-    if stage == "Закрыто" and (not in_stock_ok or not d["close_date"]):
-        need = []
-        if not in_stock_ok:
-            need.append("✔ товар в наличии (Проверено)")
-        if not d["close_date"]:
-            need.append("дата закрытия")
-        errors.append("Закрыто оформлено неверно: нет " + ", ".join(need))
-    if stage == "Удалён" and st not in ("Удалён", "Удален"):
-        if not d["delete_reason"]:
-            errors.append("Удалён: не указана причина удаления")
-        if not d["close_date"]:
-            errors.append("Удалён: не указана дата удаления")
-    if stage == "Не состоялась":
-        if not d["reject_reason"]:
-            errors.append("Не состоялась: не указана причина отказа")
-        if not d["close_date"]:
-            errors.append("Не состоялась: не указана дата")
     
     # Новая логика на основе status_1c
     if st in ("Удален", "Удалён"):
@@ -728,8 +692,6 @@ def derive(d, today=None, user_action_keys=None):
         hint, level = "Напомнить оплатить", "risk"
     elif st == "Резерв" and not paid:
         hint, level = "Довести до оплаты", "warn"
-    elif stage == "Сервис":
-        hint, level = "Связаться с клиентом", "info"
     else:
         hint, level = "Связаться с клиентом", "info"
 
@@ -772,14 +734,6 @@ def compute_deal_level(d, today=None):
 
     # Ошибки (из derive)
     has_errors = False
-    if stage == "Закрыто" and (not in_stock_ok or not d.get("close_date")):
-        has_errors = True
-    if stage == "Удалён" and st not in ("Удалён", "Удален"):
-        if not d.get("delete_reason") or not d.get("close_date"):
-            has_errors = True
-    if stage == "Не состоялась":
-        if not d.get("reject_reason") or not d.get("close_date"):
-            has_errors = True
 
     # Уровень (из derive)
     if st in ("Удален", "Удалён"):
@@ -805,9 +759,9 @@ def recompute_all_statuses(con):
     
     Загружает только нужные поля, вычисляет в Python и обновляет батчем.
     """
-    cols = ("key, status_1c, deleted, posted, reserved, stage, "
+    cols = ("key, status_1c, "
             "has_payment, payment_amount, payment_date, "
-            "in_stock, close_date, delete_reason, reject_reason, notes, "
+            "in_stock, delete_reason, notes, "
             "doc_date, created_at, computed_status, computed_level")
     rows = list(con.execute(f"SELECT {cols} FROM deals"))
     if not rows:
@@ -892,20 +846,12 @@ def parse_in_stock(v):
     return "Ожидает проверки"
 
 COLMAP_MGR = {
-    "Этап сделки": ("stage", clean_text),
-    "Дата посл. контакта": ("last_contact", parse_date),
-    "Дата закрытия|удаления": ("close_date", parse_date),
-    "Причина отказа": ("reject_reason", clean_text),
     "Причина удаления": ("delete_reason", clean_text),
     "Примечания": ("notes", clean_text),
     "Товар в наличии": ("in_stock", parse_in_stock),
-    "Закрывающие документы": ("closing_docs", opt_bool),
-    "Доставка": ("delivery", clean_text),
-    "Номер договора": ("contract_num", clean_text),
-    "Источник лида": ("lead_source", clean_text),
 }
-TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c", "deleted", "posted",
-              "reserved", "client", "status_1c", "payment_amount", "has_payment",
+TRACKED_1C = ["amount", "doc_date", "contacts", "comment_1c",
+              "client", "status_1c", "payment_amount", "has_payment",
               "payment_source", "payment_date", "invoice_basis"]
 
 FLAG_TRIGGERS = {"amount", "doc_date", "status_1c", "payment_amount", "has_payment", "payment_date"}
@@ -913,11 +859,11 @@ FLAG_TRIGGERS = {"amount", "doc_date", "status_1c", "payment_amount", "has_payme
 # Колонки, загружаемые при старте импорта — только те, что нужны в _process_import_df
 _EXISTING_COLS = (
     "key, territory, city, branch, author, doc, amount, doc_date, "
-    "contacts, comment_1c, deleted, posted, reserved, client, status_1c, "
+    "contacts, comment_1c, client, status_1c, "
     "payment_amount, payment_source, payment_date, has_payment, "
-    "invoice_basis, stage, last_contact, close_date, reject_reason, "
-    "delete_reason, notes, in_stock, closing_docs, delivery, "
-    "contract_num, lead_source, flag"
+    "invoice_basis, "
+    "delete_reason, notes, in_stock, "
+    "flag"
 )
 
 
@@ -1051,23 +997,6 @@ def _finalize_import(con, now):
     После этого пересчитываем computed_status/computed_level.
     """
     con.execute_batch([
-        (
-            """UPDATE deals SET close_date = substr(COALESCE(doc_date, created_at),1,10)
-               WHERE close_date IS NULL AND posted=1 AND reserved=0 AND deleted=0""",
-            None,
-        ),
-        (
-            """UPDATE deals SET next_step='Закрыто автоматически'
-               WHERE (next_step IS NULL OR next_step='')
-                 AND posted=1 AND reserved=0 AND deleted=0""",
-            None,
-        ),
-        (
-            """UPDATE deals SET stage='Закрыто', in_stock='Товар есть',
-                      check_status='Закрыто автоматически', flag=''
-               WHERE posted=1 AND reserved=0 AND deleted=0""",
-            None,
-        ),
         (
             "UPDATE deals SET flag='' WHERE status_1c IN ('Выдан', 'Удален', 'Удалён')",
             None,
@@ -1254,13 +1183,6 @@ def build_filters_sql(args, zone_cities=None):
     elif city:
         where.append("city = :city")
         params["city"] = city
-
-    stage = args.get("stage", "")
-    if stage == "(пусто)":
-        where.append("(stage IS NULL OR stage = '')")
-    elif stage:
-        where.append("stage = :stage")
-        params["stage"] = stage
 
     # Используем precomputed computed_status вместо SQL_STATUS
     status = args.get("status", "")

@@ -72,7 +72,7 @@ class DealRepository:
         return [{"status": r["s"], "author": r["a"], "amount": r["sum"] or 0} for r in rows]
 
     def get_lost_stats(self, where_sql, params):
-        lost_sql = f"SELECT COALESCE(NULLIF(reject_reason, ''), NULLIF(delete_reason, ''), '(без причины)') as r, SUM(amount) as a FROM deals WHERE {where_sql} AND ({SQL_IS_CLOSED} AND ({SQL_LEVEL}) != 'done') GROUP BY r"
+        lost_sql = f"SELECT COALESCE(NULLIF(delete_reason, ''), '(без причины)') as r, SUM(amount) as a FROM deals WHERE {where_sql} AND ({SQL_IS_CLOSED} AND ({SQL_LEVEL}) != 'done') GROUP BY r"
         lost_rows = list(self.db.execute(lost_sql, params))
         return {r["r"]: r["a"] or 0 for r in lost_rows}
 
@@ -107,7 +107,7 @@ class DealRepository:
         return {r["a"]: dict(r) for r in mgr_rows}
 
     def get_dashboard_raw_deals(self, where_sql, params):
-        query = f"SELECT COALESCE(doc_date, created_at) as date, amount, city, author, stage, client FROM deals WHERE {where_sql} ORDER BY date ASC"
+        query = f"SELECT COALESCE(doc_date, created_at) as date, amount, city, author, status_1c, client FROM deals WHERE {where_sql} ORDER BY date ASC"
         return list(self.db.execute(query, params))
 
     def get_dashboard_structure(self, where_sql, params, group_col):
@@ -125,7 +125,6 @@ class DealRepository:
             COUNT(*) as total_actions,
             COUNT(DISTINCT h.deal_key) as deals_touched,
             SUM(CASE WHEN h.field='notes' THEN 1 ELSE 0 END) as notes_added,
-            SUM(CASE WHEN h.field='stage' THEN 1 ELSE 0 END) as stages_changed,
             SUM(CASE WHEN h.field='has_payment' AND h.new_val IN ('1', 'True', 'true', 'Да') THEN 1 ELSE 0 END) as payments_marked,
             SUM(CASE WHEN h.field='in_stock' AND h.new_val='Проверено' THEN 1 ELSE 0 END) as stock_checked
         FROM history h

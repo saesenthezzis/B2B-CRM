@@ -202,14 +202,15 @@ function buildParams() {
 const COLS = [
   { id: 'doc_date', name: 'Дата' },
   { id: 'city', name: 'Филиал' },
+  { id: 'author', name: 'Автор' },
   { id: 'doc_num', name: 'Документ' },
   { id: 'client', name: 'Клиент' },
   { id: 'hint', name: 'Действие' },
   { id: 'amount', name: 'Сумма' },
   { id: 'in_stock', name: 'Товар' },
   { id: 'plan_contact', name: 'Срок' },
+  { id: 'delete_reason', name: 'Причина удаления' },
   { id: 'notes', name: 'Заметка' },
-  { id: 'author', name: 'Автор' },
   { id: 'hist', name: '' },
   { id: '_confirm', name: '' },
 ];
@@ -251,14 +252,15 @@ function rowHtml(d: any) {
   return `<tr class="r-${d.level}" id="r-${cssKey(d.key)}">
     <td>${flag}${dateStr}<span class="cl">${d.workdays} раб.дн.</span></td>
     <td>${esc(d.branch || '')}</td>
+    <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td class="td-copy doc-cell" title="${esc(d.doc)}"><span class="doc-meta">${docStatus}</span><span class="copy-text" data-copy="${esc(d.doc_num)}">${esc(d.doc_num)}</span><svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></td>
     <td><b>${esc(d.client || '')}</b><br>${wa}<span class="cl" title="${esc(d.comment_1c || '')}">${esc(d.comment_1c || '')}</span></td>
     <td>${actionMark}<span class="hint ${d.level === 'error' ? 'err' : ''}"${errTip}>${esc(d.hint)}</span></td>
     <td class="sum">${paymentBadge(d)}<span class="amount-text">${money(d.amount)}</span></td>
     <td>${selectHtml(d, 'in_stock', ["Ожидает проверки", "Проверено"], false, inStockDisabled)}</td>
     <td><span class="${planColorClass}">${planVal}</span></td>
+    <td>${selectHtml(d, 'delete_reason', META?.delete_reasons || [], true, false)}</td>
     <td><input type="text" data-k="${esc(d.key)}" data-f="notes" value="${esc(d.notes || '')}" placeholder="Заметка"></td>
-    <td><span class="cl full">${esc(d.author || '')}</span></td>
     <td><button class="iconbtn" data-hist="${esc(d.key)}" title="История">🕘</button></td>
     <td class="td-confirm">${PENDING[d.key] ? `<div class="row-confirm-actions"><button class="row-confirm-btn" data-commit="${esc(d.key)}" title="Сохранить изменения"><svg viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button class="row-discard-btn" data-discard="${esc(d.key)}" title="Отменить"><svg viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ''}</td>
   </tr>`;
